@@ -4,14 +4,13 @@ import tensorflow as tf
 import tensorflow.contrib.layers as tl
 import os.path
 
-flags.DEFINE_integer('batch_size', 10, 'Update params every how many episodes')
+flags.DEFINE_integer('batch_size', 5, 'Update params every how many episodes')
 
 class PolGradNet(TFAgent):
   def __init__(self, env):
     super().__init__(env)
-    hidden2 = tl.fully_connected(self.flat_obs, num_outputs=50)
-    # hidden2 = tl.fully_connected(self.flat_obs, num_outputs=100)
-    self.score = tl.fully_connected(hidden2, num_outputs=self.num_actions, activation_fn=None)
+    hidden = tl.fully_connected(self.flat_obs, num_outputs=10)
+    self.score = tl.fully_connected(hidden, num_outputs=self.num_actions, activation_fn=None)
     self.probs = tf.nn.sigmoid(self.score)
     self.avg_r = tf.placeholder(tf.float32, name="avg_r")
     tf.summary.scalar("avg_r_summary", self.avg_r)

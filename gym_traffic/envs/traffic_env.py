@@ -9,7 +9,7 @@ import time
 
 flags = tf.app.flags
 FLAGS = flags.FLAGS
-flags.DEFINE_float('global_cars_per_sec', 3, 'Cars entering the system per second')
+flags.DEFINE_float('global_cars_per_sec', 0.5, 'Cars entering the system per second')
 flags.DEFINE_float('rate', 0.1, 'Number of seconds between simulator ticks')
 
 # GL_LINES wrapper
@@ -160,13 +160,13 @@ def update_lights(graph, state, leading, lastcar, current_phase):
 @jit(nopython=True, nogil=True)
 def add_car(road, car, state, leading, lastcar):
   pos = wrap(lastcar[road] + 1)
-  start_pos = 0
+  start_pos = np.inf
   if lastcar[road] != leading[road]:
     start_pos = state[road,xi,lastcar[road]] - state[road,li,lastcar[road]] \
         - state[road,s0i,lastcar[road]]
   if pos != leading[road]:
     state[road,:,pos] = car
-    state[road,xi,pos] = min(0, start_pos)
+    state[road,xi,pos] = min(state[road,xi,pos], start_pos)
     lastcar[road] = pos
   # else: print("Overflow")
 
@@ -178,6 +178,7 @@ def advance_finished_cars(graph, state, leading, lastcar, counts):
       newlead = wrap(leading[e]+1)
       newrd = graph.next(e)
       if newrd >= 0:
+        state[e,xi,newlead] -= graph.length(e)
         add_car(newrd, state[e,:,newlead], state, leading, lastcar)
         counts[graph.dest[e]] += 1
       state[e,:,newlead] = state[e,:,leading[e]]
@@ -188,6 +189,13 @@ def cars_on_roads(leading, lastcar):
   inverted = (leading > lastcar).astype(np.int32)
   unwrapped_lastcar = (inverted * (CAPACITY - 1)).astype(np.int32) + lastcar
   return unwrapped_lastcar - leading
+
+@jit(nopython=True, nogil=True)
+def cars_by_intersections(graph, road_cars):
+    result = np.zeros(graph.intersections, dtype=np.float32)
+    for i in range(graph.train_roads):
+        result[graph.dest[i]] += road_cars[i]
+    return result
 
 def poisson(random):
   cars_per_tick = FLAGS.cars_per_sec * FLAGS.rate
@@ -217,7 +225,9 @@ class TrafficEnv(gym.Env):
     advance_finished_cars(self.graph, self.state, self.leading,
         self.lastcar, self.counts)
     current_cars = cars_on_roads(self.leading, self.lastcar)[:self.graph.train_roads]
-    return current_cars, self.counts, False, None
+    penalty = cars_by_intersections(self.graph, current_cars)
+    scaled_penalty = 0.1 * penalty * FLAGS.rate / FLAGS.light_secs
+    return current_cars, self.counts - scaled_penalty, False, None
 
   def _reset(self):
     self.state[:,:,1] = 0 
@@ -292,3 +302,4 @@ class TrafficEnv(gym.Env):
     self.action_space = spaces.MultiDiscrete([[0,1]] * graph.intersections)
     self.observation_space = spaces.Box(low=0, high=CAPACITY-2, shape=graph.train_roads)
     self.counts = np.empty(graph.intersections, dtype=np.float32)
+    self._reset()
