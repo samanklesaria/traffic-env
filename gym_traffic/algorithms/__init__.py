@@ -2,7 +2,6 @@ import tensorflow as tf
 import numpy as np
 import os.path
 from numba import jit
-import json
 
 flags = tf.app.flags
 FLAGS = flags.FLAGS
@@ -14,8 +13,8 @@ flags.DEFINE_integer('episode_len', 800, 'Number of actions per episode')
 flags.DEFINE_integer('total_episodes', 5000, 'Total number of episodes to train')
 flags.DEFINE_integer('save_rate', 100, 'Update params every how many batches')
 flags.DEFINE_string('logdir', 'summaries', 'Log directory')
-flags.DEFINE_float('gamma', 0.99, 'Discount factor')
-flags.DEFINE_float('learning_rate', 1e-2, 'Learning rate')
+flags.DEFINE_float('gamma', 0.97, 'Discount factor')
+flags.DEFINE_float('learning_rate', 1e-4, 'Learning rate')
 flags.DEFINE_integer('summary_rate', 5, 'Show summary every how many episodes')
 flags.DEFINE_integer('validate_rate', 5, 'Validate every how many episodes')
 

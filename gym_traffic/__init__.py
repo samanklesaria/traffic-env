@@ -13,17 +13,3 @@ register(
     id='traffic-v0',
     entry_point='gym_traffic.envs:TrafficEnv',
 )
-
-register(
-    id='continuous-cooling-v0',
-    entry_point='gym_traffic.envs:ContinuousCool',
-)
-
-register(
-    id='discrete-cooling-v0',
-    entry_point='gym_traffic.envs:DiscreteCool',
-)
-
-
-
-

@@ -9,7 +9,7 @@ import time
 
 flags = tf.app.flags
 FLAGS = flags.FLAGS
-flags.DEFINE_float('global_cars_per_sec', 0.5, 'Cars entering the system per second')
+flags.DEFINE_float('local_cars_per_sec', 0.5, 'Cars entering the system per second')
 flags.DEFINE_float('rate', 0.1, 'Number of seconds between simulator ticks')
 
 # GL_LINES wrapper
@@ -115,6 +115,7 @@ class GridRoad:
 grid = deferred_type()
 grid.define(GridRoad.class_type.instance_type)
 
+# New cars have parameters sampled uniformly from archetypes
 params = 9
 xi, vi, li, ai, deltai, v0i, bi, ti, s0i = range(params)
 archetypes = np.zeros((1, params))
@@ -130,9 +131,11 @@ archetypes[0,s0i] = 0.01
 CAPACITY = 20
 EPS = 1e-8
 
+# Like mod, but preserves index 0
 @jit(int32(int32), nopython=True, nogil=True)
 def wrap(a): return 1 if a >= CAPACITY else a
 
+# The Intelligent Driver Model of lateral acceleration
 @jit(void(float32,float32[:,:],float32[:,:]), nopython=True, nogil=True)
 def sim(r, ld, me):
   v = me[vi]
@@ -144,6 +147,7 @@ def sim(r, ld, me):
   me[xi] += (dx > 0)*dx
   me[vi] = np.maximum(0, v + dv*r)
 
+# Update the leading car at the end of each road depending on light phases
 @jit(nopython=True, nogil=True)
 def update_lights(graph, state, leading, lastcar, current_phase):
   for e in range(graph.train_roads):
@@ -157,6 +161,7 @@ def update_lights(graph, state, leading, lastcar, current_phase):
       else:
         state[e, xi, leading[e]] = np.inf
 
+# Add a new car to a road
 @jit(nopython=True, nogil=True)
 def add_car(road, car, state, leading, lastcar):
   pos = wrap(lastcar[road] + 1)
@@ -168,8 +173,8 @@ def add_car(road, car, state, leading, lastcar):
     state[road,:,pos] = car
     state[road,xi,pos] = min(state[road,xi,pos], start_pos)
     lastcar[road] = pos
-  # else: print("Overflow")
 
+# Remove cars with x coordinates beyond their roads' lengths
 @jit(nopython=True, nogil=True)
 def advance_finished_cars(graph, state, leading, lastcar, counts):
   counts[:] = 0
@@ -184,12 +189,14 @@ def advance_finished_cars(graph, state, leading, lastcar, counts):
       state[e,:,newlead] = state[e,:,leading[e]]
       leading[e] = newlead
 
+# Get the number of cars on each road
 @jit(nopython=True, nogil=True)
 def cars_on_roads(leading, lastcar):
   inverted = (leading > lastcar).astype(np.int32)
   unwrapped_lastcar = (inverted * (CAPACITY - 1)).astype(np.int32) + lastcar
   return unwrapped_lastcar - leading
 
+# Get the number of cars adjacent to each intersection
 @jit(nopython=True, nogil=True)
 def cars_by_intersections(graph, road_cars):
     result = np.zeros(graph.intersections, dtype=np.float32)
@@ -197,6 +204,7 @@ def cars_by_intersections(graph, road_cars):
         result[graph.dest[i]] += road_cars[i]
     return result
 
+# Yields None separated groups of incoming cars for each tick
 def poisson(random):
   cars_per_tick = FLAGS.cars_per_sec * FLAGS.rate
   while True:
@@ -204,6 +212,7 @@ def poisson(random):
     yield archetypes[random.randint(archetypes.shape[0])]
 
 
+# Gym environment for the intelligent driver model
 class TrafficEnv(gym.Env):
   metadata = {'render.modes': ['human']}
 

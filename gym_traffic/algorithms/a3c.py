@@ -7,6 +7,8 @@ import os.path
 from functools import partial
 
 flags.DEFINE_integer('threads', 4, 'Number of different threads to use')
+flags.DEFINE_integer('a3c_batch', 30, 'Length of episode buffer')
+flags.DEFINE_integer('report_rate', 5, 'How often to report average rewards')
 
 # Copy one set of variables to another
 def update_target_graph(from_scope, to_scope):
@@ -99,19 +101,19 @@ def train(sess, net, summary, xs, ys, vals, drs):
 
 def work(net, sess, save):
   writer = tf.summary.FileWriter(os.path.join(FLAGS.logdir, net.name))
-  ys = np.empty((30, net.num_actions), dtype=np.float32)
-  vals = np.empty((31, net.num_actions), dtype=np.float32)
-  xs = np.empty((30, *net.env.observation_space.shape), dtype=np.float32)
-  drs = np.empty((31, net.num_actions), dtype=np.float32)
+  ys = np.empty((FLAGS.a3c_batch, net.num_actions), dtype=np.float32)
+  vals = np.empty((FLAGS.a3c_batch + 1, net.num_actions), dtype=np.float32)
+  xs = np.empty((FLAGS.a3c_batch, *net.env.observation_space.shape), dtype=np.float32)
+  drs = np.empty((FLAGS.a3c_batch + 1, net.num_actions), dtype=np.float32)
   print("Started worker", net.name)
-  episode_rewards = np.zeros(5, dtype=np.float32)
+  episode_rewards = np.zeros(FLAGS.report_rate, dtype=np.float32)
 
   for e in range(FLAGS.total_episodes):
     sess.run(net.update_local)
     obs = net.env.reset()
     episode_reward = 0
     for mt in range(FLAGS.episode_len):
-      t = mt % 30
+      t = mt % FLAGS.a3c_batch
       tfprob, v = sess.run([net.probs,net.value], feed_dict={
           net.observations:[obs]})
       y = (np.random.uniform(size=tfprob[0].shape) < tfprob[0]).astype(np.int8)
@@ -121,18 +123,18 @@ def work(net, sess, save):
       obs, reward, done, _ = net.env.step(y if net.vector_action else y[0])
       drs[t] = reward / 1000.0
       episode_reward += np.sum(reward)
-      if t == 29 and not done:
-        vals[30] = sess.run(net.value, feed_dict={net.observations: [obs]})[0]
+      if t == FLAGS.a3c_batch - 1 and not done:
+        vals[-1] = sess.run(net.value, feed_dict={net.observations: [obs]})[0]
         train(sess, net, None, xs, ys, vals, drs)
         sess.run(net.update_local)
       if done: break
-    if t != 29 or done:
+    if t != FLAGs.a3c_batch - 1 or done:
       vals[t+1] = 0 if done else sess.run(net.value, feed_dict={net.observations: [obs]})[0,0]
       s = train(sess, net, net.summary, xs[:t+1], ys[:t+1], vals[:t+2], drs[:t+2])
       writer.add_summary(s, e)
 
-    episode_rewards[e % 5] = episode_reward
-    if e % 5 == 4:
+    episode_rewards[e % FLAGS.report_rate] = episode_reward
+    if e % FLAGS.report_rate == FLAGS.report_rate - 1:
       reward_mean = np.mean(episode_rewards)
       print("Reward mean", reward_mean)
       s = sess.run(net.avg_summary, feed_dict={net.avg_r:reward_mean})

@@ -39,7 +39,7 @@ def make_env():
 
 def main(_):
   FLAGS.episode_len = int(FLAGS.episode_secs / FLAGS.light_secs)
-  FLAGS.cars_per_sec = FLAGS.global_cars_per_sec * the_grid.m
+  FLAGS.cars_per_sec = FLAGS.local_cars_per_sec * the_grid.m
   with open('settings', 'w') as f:
     json.dump(FLAGS.__flags, f, indent=4, separators=(',', ': '))
   trainer.run(make_env)
