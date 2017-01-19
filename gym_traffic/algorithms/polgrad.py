@@ -9,8 +9,9 @@ flags.DEFINE_integer('batch_size', 5, 'Update params every how many episodes')
 class PolGradNet(TFAgent):
   def __init__(self, env):
     super().__init__(env)
-    hidden = tl.fully_connected(self.flat_obs, num_outputs=10)
-    self.score = tl.fully_connected(hidden, num_outputs=self.num_actions, activation_fn=None)
+    hidden = tl.fully_connected(self.flat_obs, num_outputs=200)
+    hidden2 = tl.fully_connected(self.flat_obs, num_outputs=200)
+    self.score = tl.fully_connected(hidden2, num_outputs=self.num_actions, activation_fn=None)
     self.probs = tf.nn.sigmoid(self.score)
     self.avg_r = tf.placeholder(tf.float32, name="avg_r")
     tf.summary.scalar("avg_r_summary", self.avg_r)
@@ -80,6 +81,7 @@ def run(env_f):
           net.saver.save(sess, net.checkpoint_file)
         reward_sum = 0
       else: sess.run(net.train, feed_dict=fd)
+    net.saver.save(sess, net.checkpoint_file)
 
 def validate(net, env, sess):
   reward_sum = 0
