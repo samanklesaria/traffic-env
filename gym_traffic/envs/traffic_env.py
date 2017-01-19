@@ -3,13 +3,15 @@ from gym import error, spaces, utils
 import numpy as np
 import tensorflow as tf
 from numba import jit, jitclass, deferred_type, void, float64, float32, int64, int32, int8
+import numba
 from gym.envs.classic_control import rendering
+from gym_traffic.envs.roadgraph import grid, GridRoad
 from pyglet.gl import *
 import time
 
 flags = tf.app.flags
 FLAGS = flags.FLAGS
-flags.DEFINE_float('local_cars_per_sec', 0.5, 'Cars entering the system per second')
+flags.DEFINE_float('local_cars_per_sec', 0.3, 'Cars entering the system per second')
 flags.DEFINE_float('rate', 0.1, 'Number of seconds between simulator ticks')
 
 # GL_LINES wrapper
@@ -33,99 +35,17 @@ def get_rot(line, length):
   l = line / length
   return np.arctan2(l[1,1] - l[0,1], l[1,0] - l[0,0])
 
-# Storage for grid graph
-spec = [
-    ('intersections', int64),
-    ('train_roads', int64),
-    ('roads', int64),
-    ('entrypoints', int64[:]),
-    ('locs', float32[:,:,:]),
-    ('phases', int8[:]),
-    ('dest', int64[:]),
-    ('len', float32),
-    ('n', int64),
-    ('m', int64)]
-
-# Return an array of road locations for a grid road network
-@jit(float32[:,:,:](float64,int64,int64,int64,int64), nopython=True, nogil=True)
-def get_locs_gridroad(eps,m,n,v,roads):
-    locs = np.empty((roads,2,2), dtype=np.float32)
-    for i in range(roads):
-        d = i // v
-        li = i % v
-        col = li % n
-        row = li // n
-        r = i - 4*v
-        if d == 0: locs[i] = np.array(((col-1,row-eps),(col,row-eps)))
-        elif d == 1: locs[i] = np.array(((col+1,row+eps),(col,row+eps)))
-        elif d == 2: locs[i] = np.array(((col+eps,row-1),(col+eps,row)))
-        elif d == 3: locs[i] = np.array(((col-eps,row+1),(col-eps,row)))
-        elif r < n: locs[i] = np.array(((r-eps,0),(r-eps,-1)))
-        elif r < n+m: locs[i] = np.array(((n-1,r-n-eps),(n,r-n-eps)))
-        elif r < 2*n+m: locs[i] = np.array(((r-n-m+eps,m-1),(r-n-m+eps,m)))
-        else: locs[i] = np.array(((0,r-2*n-m+eps),(-1,r-2*n-m+eps)))
-    return locs
-
-# A graph representing a 2D grid with no turns
-@jitclass(spec)
-class GridRoad:
-    def __init__(self, m, n, l):
-        self.len = l
-        self.n = n
-        self.m = m
-        v = m*n
-        self.train_roads = 4*v
-        self.roads = self.train_roads + 2*n + 2*m
-        self.intersections = v
-        self.locs = get_locs_gridroad(0.02,m,n,v,self.roads)
-        self.phases = (np.arange(self.roads) // v < 2).astype(np.int8)
-        self.dest = np.empty(self.roads, dtype=np.int64)
-        for i in range(self.roads):
-            self.dest[i] = i%v if i<4*v else -1
-
-    # Pick a probability distribution on entrypoints
-    def generate_entrypoints(self, choices):
-        n = self.n
-        m = self.m
-        v = m * n
-        emp = np.empty(0,dtype=np.int64)
-        self.entrypoints = np.concatenate((
-            n*np.arange(m) if (choices & 1) == 0 else emp,
-            v+n*np.arange(1,m+1)-1 if ((choices >> 1) & 1) == 0 else emp,
-            2*v+np.arange(n) if ((choices >> 2) & 1) == 0 else emp,
-            3*v+n*(m-1)+np.arange(n) if ((choices >> 3) & 1) == 0 else emp))
-                
-    # Get the length of road e
-    def length(self, e):
-        return self.len
-
-    # Return the road a car should go to after road i, or -1
-    def next(self, i):
-        v = self.intersections
-        n = self.n
-        m = self.m
-        if i >= 4*v: return -1
-        col = i % n
-        row = (i % v) // n
-        if i < v: return i+1 if col < n-1 else 4*v+n+row
-        if i < 2*v: return i-1 if col > 0 else 4*v+2*n+m+row
-        if i < 3*v: return i+n if row < m-1 else 4*v+n+m+col
-        return i-n if row > 0 else 4*v+col
-
-grid = deferred_type()
-grid.define(GridRoad.class_type.instance_type)
-
 # New cars have parameters sampled uniformly from archetypes
 params = 9
 xi, vi, li, ai, deltai, v0i, bi, ti, s0i = range(params)
 archetypes = np.zeros((1, params))
-archetypes[0,vi] = 0.3
+archetypes[0,vi] = 0.2
 archetypes[0,ai] = 0.02
 archetypes[0,deltai] = 4
 archetypes[0,v0i] = 0.8
 archetypes[0,li] = 0.08
 archetypes[0,bi] = 0.06
-archetypes[0,ti] = 1.2
+archetypes[0,ti] = 2
 archetypes[0,s0i] = 0.01
 
 CAPACITY = 20
@@ -196,20 +116,29 @@ def cars_on_roads(leading, lastcar):
   unwrapped_lastcar = (inverted * (CAPACITY - 1)).astype(np.int32) + lastcar
   return unwrapped_lastcar - leading
 
-# Get the number of cars adjacent to each intersection
-@jit(nopython=True, nogil=True)
-def cars_by_intersections(graph, road_cars):
-    result = np.zeros(graph.intersections, dtype=np.float32)
-    for i in range(graph.train_roads):
-        result[graph.dest[i]] += road_cars[i]
-    return result
-
 # Yields None separated groups of incoming cars for each tick
 def poisson(random):
   cars_per_tick = FLAGS.cars_per_sec * FLAGS.rate
   while True:
     for _ in range(int(random.exponential(1/cars_per_tick))): yield None
     yield archetypes[random.randint(archetypes.shape[0])]
+
+@jit(nopython=True, nogil=True)
+def move_cars(graph, state, leading, lastcar, rate, current_phase, counts):
+  update_lights(graph, state, leading, lastcar, current_phase)
+  for e in range(graph.roads):
+    if leading[e] == lastcar[e]: continue
+    if leading[e] < lastcar[e]:
+      sim(rate, state[e,:,leading[e]:lastcar[e]],
+            state[e,:,leading[e]+1:lastcar[e]+1])
+    else:
+        state[e,:,0] = state[e,:,-1]
+        sim(rate, state[e,:,leading[e]:-1],
+            state[e,:,leading[e]+1:])
+        sim(rate, state[e,:,:lastcar[e]],
+            state[e,:,1:lastcar[e]+1])
+  advance_finished_cars(graph, state, leading, lastcar, counts)
+  return cars_on_roads(leading, lastcar)[:graph.train_roads]
 
 
 # Gym environment for the intelligent driver model
@@ -218,33 +147,22 @@ class TrafficEnv(gym.Env):
 
   def _step(self, action):
     self.current_phase = np.array(action).astype(np.int8)
-    update_lights(self.graph, self.state, self.leading, self.lastcar, self.current_phase)
-    self.add_new_cars()
-    for e in range(self.graph.roads):
-      if self.leading[e] == self.lastcar[e]: continue
-      if self.leading[e] < self.lastcar[e]:
-        sim(FLAGS.rate, self.state[e,:,self.leading[e]:self.lastcar[e]],
-            self.state[e,:,self.leading[e]+1:self.lastcar[e]+1])
-      else:
-        self.state[e,:,0] = self.state[e,:,-1]
-        sim(FLAGS.rate, self.state[e,:,self.leading[e]:-1],
-            self.state[e,:,self.leading[e]+1:])
-        sim(FLAGS.rate, self.state[e,:,:self.lastcar[e]],
-            self.state[e,:,1:self.lastcar[e]+1])
-    advance_finished_cars(self.graph, self.state, self.leading,
-        self.lastcar, self.counts)
-    current_cars = cars_on_roads(self.leading, self.lastcar)[:self.graph.train_roads]
-    penalty = cars_by_intersections(self.graph, current_cars)
-    scaled_penalty = 0.1 * penalty * FLAGS.rate / FLAGS.light_secs
-    return current_cars, self.counts - scaled_penalty, False, None
+    if self.adding_steps is None or self.steps < self.adding_steps: self.add_new_cars()
+    self.steps += 1
+    current_cars = move_cars(self.graph, self.state, self.leading,
+        self.lastcar, FLAGS.rate, self.current_phase, self.counts)
+    return current_cars, self.counts, self.steps >= self.total_steps, None
 
   def _reset(self):
+    self.steps = 0
     self.state[:,:,1] = 0 
     self.state[:,xi,1] = np.inf
-    self.current_phase = np.zeros(self.graph.intersections, dtype=np.int8)
+    self.current_phase = np.round(
+      np.random.randn(self.graph.intersections) + 0.5).astype(np.int8)
     self.rand_car = poisson(np.random.RandomState())
     self.leading = np.ones(self.graph.roads, dtype=np.int32)
     self.lastcar = np.ones(self.graph.roads, dtype=np.int32)
+    if self.randomized: self.graph.generate_entrypoints(np.random.randint(0b1111))
     return cars_on_roads(self.leading, self.lastcar)[:self.graph.train_roads]
 
   def add_new_cars(self):
@@ -304,11 +222,15 @@ class TrafficEnv(gym.Env):
         self.cars[i].vs = np.column_stack((vals, np.zeros(vals.shape[0])))
       else: self.cars[i].vs = []
         
-  def set_graph(self, graph):
+  def set_graph(self, graph, total_steps, cooldown=0, randomized=False):
     self.viewer = None
+    self.randomized = randomized
+    if not randomized: graph.generate_entrypoints(0)
     self.graph = graph
     self.state = np.empty((self.graph.roads, params, CAPACITY), dtype=np.float32)
     self.action_space = spaces.MultiDiscrete([[0,1]] * graph.intersections)
     self.observation_space = spaces.Box(low=0, high=CAPACITY-2, shape=graph.train_roads)
     self.counts = np.empty(graph.intersections, dtype=np.float32)
+    self.total_steps = total_steps
+    self.adding_steps = total_steps - cooldown
     self._reset()

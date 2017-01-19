@@ -27,13 +27,22 @@ class PolGradNet(TFAgent):
     self.apply_grads = opt.apply_gradients([(ng, v) for (ng, _, v) in grads])
     self.summary = tf.summary.merge_all()
 
+EPS = 1e-6
+
 def run(env_f):
   env = env_f()
+  net = PolGradNet(env)
+  if FLAGS.validate:
+    with tf.Session() as sess:
+      sess.run(tf.global_variables_initializer())
+      net.load_from_checkpoint(sess)
+      sess.run(net.reset)
+      while True:
+        print(validate(net, env, sess))
   if tf.gfile.Exists(FLAGS.logdir):
     tf.gfile.DeleteRecursively(FLAGS.logdir)
   tf.gfile.MakeDirs(FLAGS.logdir)
   writer = tf.summary.FileWriter(os.path.join(FLAGS.logdir, "polgrad"))
-  net = PolGradNet(env)
   xs = np.empty((FLAGS.episode_len, *env.observation_space.shape), dtype=np.float32)
   drs = np.empty((FLAGS.episode_len, net.num_actions), dtype=np.float32)
   ys = np.empty((FLAGS.episode_len, net.num_actions), dtype=np.float32)
@@ -57,7 +66,7 @@ def run(env_f):
       epr = drs[:t+1]
       discount(epr, FLAGS.gamma)
       epr -= np.mean(epr)
-      epr /= np.std(epr)
+      epr /= (np.std(epr) + EPS)
       fd = {net.observations: xs[:t+1], net.input_y: ys[:t+1], net.advantages: epr}
       if episode_number % FLAGS.batch_size == 0:
         fd[net.avg_r] = reward_sum / FLAGS.batch_size
@@ -71,3 +80,16 @@ def run(env_f):
           net.saver.save(sess, net.checkpoint_file)
         reward_sum = 0
       else: sess.run(net.train, feed_dict=fd)
+
+def validate(net, env, sess):
+  reward_sum = 0
+  obs = env.reset()
+  for _ in range(FLAGS.episode_len):
+    dist = sess.run(net.probs,feed_dict={net.observations: [obs]})
+    if FLAGS.render: print("Action", dist)
+    y, = np.round(dist).astype(np.int8)
+    obs, reward, done, _ = env.step(y if net.vector_action else y[0])
+    if FLAGS.render: print("Reward", reward)
+    reward_sum += reward
+    if done: break
+  return reward_sum

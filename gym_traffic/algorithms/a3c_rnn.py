@@ -22,10 +22,20 @@ class A3CNet(TFAgent):
     self.name = tf.get_variable_scope().name
     self.env = env_f()
     super().__init__(self.env)
-    hidden = tl.fully_connected(self.flat_obs, num_outputs=10)
-    self.score = tl.fully_connected(hidden, num_outputs=self.num_actions, activation_fn=None)
+    hidden = tl.fully_connected(self.flat_obs, num_outputs=200)
+    hidden2 = tl.fully_connected(hidden, num_outputs=200)
+    lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(200,state_is_tuple=True)
+    self.c_init = np.zeros((1, lstm_cell.state_size.c), np.float32)
+    self.h_init = np.zeros((1, lstm_cell.state_size.h), np.float32)
+    self.c_in = tf.placeholder(tf.float32, [1, lstm_cell.state_size.c], name="cin")
+    self.h_in = tf.placeholder(tf.float32, [1, lstm_cell.state_size.h], name="hin")
+    state_in = tf.nn.rnn_cell.LSTMStateTuple(self.c_in, self.h_in)
+    lstm_outputs, self.lstm_state = tf.nn.dynamic_rnn(
+        lstm_cell, tf.expand_dims(hidden2, 0), initial_state=state_in)
+    rnn_out = tf.reshape(lstm_outputs, [-1, 200])
+    self.score = tl.fully_connected(rnn_out, num_outputs=self.num_actions, activation_fn=None)
     self.probs = tf.nn.sigmoid(self.score)
-    self.value = tl.fully_connected(hidden, num_outputs=self.num_actions, activation_fn=None)
+    self.value = tl.fully_connected(rnn_out, num_outputs=self.num_actions, activation_fn=None)
   
   def make_train_ops(self):
     self.update_local = update_target_graph('global', self.name)
@@ -63,8 +73,10 @@ def make_worker(name, env_f):
 def validate(net, env, sess):
   reward_sum = 0
   obs = env.reset()
-  for _ in range(FLAGS.episode_len):
-    dist, = sess.run(net.probs, feed_dict={net.observations: [obs]})
+  rnn_state = [net.c_init, net.h_init]
+  for i in range(FLAGS.episode_len):
+    dist,rnn_state = sess.run([net.probs,net.lstm_state], feed_dict={net.observations: [obs],
+      net.c_in: rnn_state[0], net.h_in: rnn_state[1]})
     if FLAGS.render: print("Action", dist)
     y, = np.round(dist)
     obs, reward, done, _ = env.step(y if net.vector_action else y[0])
@@ -73,6 +85,9 @@ def validate(net, env, sess):
   return reward_sum
 
 def run(env_f):
+  hack = env_f(norender=True) # We need to run an env first to compile it, because jit compilation isn't thread safe
+  hack.reset()
+  hack.step(hack.action_space.sample())
   with tf.variable_scope('global'): master = A3CNet(env_f)
   if not FLAGS.validate: 
     if tf.gfile.Exists(FLAGS.logdir):
@@ -103,7 +118,8 @@ def train(sess, net, summary, xs, ys, vals, drs):
   discount(drs, FLAGS.gamma)
   discount(advantages, FLAGS.gamma)
   fd = {net.observations: xs, net.input_y: ys,
-    net.advantages: advantages, net.target_v: drs[:-1]}
+    net.advantages: advantages, net.target_v: drs[:-1],
+    net.c_in: net.c_init, net.h_in: net.h_init}
   if summary is not None: return sess.run([net.apply_grads,summary], feed_dict=fd)[1]
   else: return sess.run(net.apply_grads, feed_dict=fd)
 
@@ -123,9 +139,11 @@ def work(net, sess, save):
     sess.run(net.update_local)
     obs = net.env.reset()
     episode_reward = 0
+    rnn_state = [net.c_init, net.h_init]
     for mt in range(FLAGS.episode_len):
       t = mt % FLAGS.a3c_batch
-      tfprob,v = sess.run([net.probs,net.value], feed_dict={net.observations:[obs]})
+      tfprob,v,rnn_state = sess.run([net.probs,net.value,net.lstm_state], feed_dict={
+          net.c_in: rnn_state[0], net.h_in: rnn_state[1], net.observations:[obs]})
       y = explore(tfprob[0], epsilon)
       ys[t] = y.astype(np.float32)
       xs[t] = obs
@@ -134,13 +152,14 @@ def work(net, sess, save):
       drs[t] = reward
       episode_reward += np.sum(reward)
       if t == FLAGS.a3c_batch - 1 and not done:
-        vals[-1] = sess.run(net.value, feed_dict={net.observations: [obs]})[0]
+        vals[-1] = sess.run(net.value, feed_dict={net.observations: [obs],
+          net.c_in: rnn_state[0], net.h_in: rnn_state[1]})[0]
         train(sess, net, None, xs, ys, vals, drs)
         sess.run(net.update_local)
       if done: break
     if t != FLAGS.a3c_batch - 1 or done:
       vals[t+1] = 0 if done else sess.run(net.value, feed_dict={
-        net.observations: [obs]})[0,0]
+        net.observations: [obs], net.c_in: rnn_state[0], net.h_in: rnn_state[1]})[0,0]
       s = train(sess, net, net.summary, xs[:t+1], ys[:t+1], vals[:t+2], drs[:t+2])
       writer.add_summary(s, e)
       epsilon -= (epsilon - end_epsilon) / (FLAGS.total_episodes - e)
