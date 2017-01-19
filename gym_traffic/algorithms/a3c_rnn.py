@@ -22,8 +22,10 @@ class A3CNet(TFAgent):
     self.name = tf.get_variable_scope().name
     self.env = env_f()
     super().__init__(self.env)
-    hidden = tl.fully_connected(self.flat_obs, num_outputs=200)
-    hidden2 = tl.fully_connected(hidden, num_outputs=200)
+    hidden = tl.fully_connected(self.flat_obs, num_outputs=200,
+        normalizer_fn=tl.batch_norm, normalizer_params={'updates_collections': None})
+    hidden2 = tl.fully_connected(hidden, num_outputs=200,
+        normalizer_fn=tl.batch_norm, normalizer_params={'updates_collections': None})
     lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(200,state_is_tuple=True)
     self.c_init = np.zeros((1, lstm_cell.state_size.c), np.float32)
     self.h_init = np.zeros((1, lstm_cell.state_size.h), np.float32)
