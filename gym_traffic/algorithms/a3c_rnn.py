@@ -22,11 +22,11 @@ class A3CNet(TFAgent):
     self.name = tf.get_variable_scope().name
     self.env = env_f()
     super().__init__(self.env)
-    hidden = tl.fully_connected(self.flat_obs, num_outputs=200,
+    hidden = tl.fully_connected(self.flat_obs, num_outputs=150,
         normalizer_fn=tl.batch_norm, normalizer_params={'updates_collections': None})
-    hidden2 = tl.fully_connected(hidden, num_outputs=200,
+    hidden2 = tl.fully_connected(hidden, num_outputs=150,
         normalizer_fn=tl.batch_norm, normalizer_params={'updates_collections': None})
-    lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(200,state_is_tuple=True)
+    lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(150,state_is_tuple=True)
     self.c_init = np.zeros((1, lstm_cell.state_size.c), np.float32)
     self.h_init = np.zeros((1, lstm_cell.state_size.h), np.float32)
     self.c_in = tf.placeholder(tf.float32, [1, lstm_cell.state_size.c], name="cin")
@@ -34,7 +34,7 @@ class A3CNet(TFAgent):
     state_in = tf.nn.rnn_cell.LSTMStateTuple(self.c_in, self.h_in)
     lstm_outputs, self.lstm_state = tf.nn.dynamic_rnn(
         lstm_cell, tf.expand_dims(hidden2, 0), initial_state=state_in)
-    rnn_out = tf.reshape(lstm_outputs, [-1, 200])
+    rnn_out = tf.reshape(lstm_outputs, [-1, 150])
     self.score = tl.fully_connected(rnn_out, num_outputs=self.num_actions, activation_fn=None)
     self.probs = tf.nn.sigmoid(self.score)
     self.value = tl.fully_connected(rnn_out, num_outputs=self.num_actions, activation_fn=None)

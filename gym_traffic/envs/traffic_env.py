@@ -7,12 +7,14 @@ import numba
 from gym.envs.classic_control import rendering
 from gym_traffic.envs.roadgraph import grid, GridRoad
 from pyglet.gl import *
+import itertools
 import time
 
 flags = tf.app.flags
 FLAGS = flags.FLAGS
 flags.DEFINE_float('local_cars_per_sec', 0.3, 'Cars entering the system per second')
 flags.DEFINE_float('rate', 0.1, 'Number of seconds between simulator ticks')
+flags.DEFINE_boolean('poisson', True, 'Should we use a Poisson distribution?')
 
 # GL_LINES wrapper
 class Lines(rendering.Geom):
@@ -36,8 +38,8 @@ def get_rot(line, length):
   return np.arctan2(l[1,1] - l[0,1], l[1,0] - l[0,0])
 
 # New cars have parameters sampled uniformly from archetypes
-params = 9
-xi, vi, li, ai, deltai, v0i, bi, ti, s0i = range(params)
+params = 10
+xi, vi, li, ai, deltai, v0i, bi, ti, s0i, wi = range(params)
 archetypes = np.zeros((1, params))
 archetypes[0,vi] = 0.2
 archetypes[0,ai] = 0.02
@@ -83,7 +85,7 @@ def update_lights(graph, state, leading, lastcar, current_phase):
 
 # Add a new car to a road
 @jit(nopython=True, nogil=True)
-def add_car(road, car, state, leading, lastcar):
+def add_car(road, car, state, leading, lastcar, tick):
   pos = wrap(lastcar[road] + 1)
   start_pos = np.inf
   if lastcar[road] != leading[road]:
@@ -91,21 +93,22 @@ def add_car(road, car, state, leading, lastcar):
         - state[road,s0i,lastcar[road]]
   if pos != leading[road]:
     state[road,:,pos] = car
+    state[road,wi,pos] = tick
     state[road,xi,pos] = min(state[road,xi,pos], start_pos)
     lastcar[road] = pos
 
 # Remove cars with x coordinates beyond their roads' lengths
 @jit(nopython=True, nogil=True)
-def advance_finished_cars(graph, state, leading, lastcar, counts):
+def advance_finished_cars(graph, state, leading, lastcar, counts, tick):
   counts[:] = 0
   for e in range(graph.roads):
     while leading[e] != lastcar[e] and state[e,xi,wrap(leading[e]+1)] > graph.length(e):
       newlead = wrap(leading[e]+1)
       newrd = graph.next(e)
       if newrd >= 0:
+        counts[graph.dest[e]] += 1 / (tick - state[e,wi,newlead])
         state[e,xi,newlead] -= graph.length(e)
-        add_car(newrd, state[e,:,newlead], state, leading, lastcar)
-        counts[graph.dest[e]] += 1
+        add_car(newrd, state[e,:,newlead], state, leading, lastcar, tick)
       state[e,:,newlead] = state[e,:,leading[e]]
       leading[e] = newlead
 
@@ -116,15 +119,22 @@ def cars_on_roads(leading, lastcar):
   unwrapped_lastcar = (inverted * (CAPACITY - 1)).astype(np.int32) + lastcar
   return unwrapped_lastcar - leading
 
-# Yields None separated groups of incoming cars for each tick
+# Yields None separated groups of incoming cars for each tick according to Poisson
 def poisson(random):
   cars_per_tick = FLAGS.cars_per_sec * FLAGS.rate
   while True:
     for _ in range(int(random.exponential(1/cars_per_tick))): yield None
     yield archetypes[random.randint(archetypes.shape[0])]
 
+# Yields a car EXACTLY every cars_per_sec
+def regular(random):
+  ticks_per_car = int(1 / (FLAGS.cars_per_sec * FLAGS.rate))
+  for i in itertools.count(0):
+    if i % ticks_per_car == 0: yield archetypes[0]
+    else: yield None
+
 @jit(nopython=True, nogil=True)
-def move_cars(graph, state, leading, lastcar, rate, current_phase, counts):
+def move_cars(graph, state, leading, lastcar, rate, current_phase, counts, tick):
   update_lights(graph, state, leading, lastcar, current_phase)
   for e in range(graph.roads):
     if leading[e] == lastcar[e]: continue
@@ -137,7 +147,7 @@ def move_cars(graph, state, leading, lastcar, rate, current_phase, counts):
             state[e,:,leading[e]+1:])
         sim(rate, state[e,:,:lastcar[e]],
             state[e,:,1:lastcar[e]+1])
-  advance_finished_cars(graph, state, leading, lastcar, counts)
+  advance_finished_cars(graph, state, leading, lastcar, counts, tick)
   return cars_on_roads(leading, lastcar)[:graph.train_roads]
 
 
@@ -147,10 +157,11 @@ class TrafficEnv(gym.Env):
 
   def _step(self, action):
     self.current_phase = np.array(action).astype(np.int8)
-    if self.adding_steps is None or self.steps < self.adding_steps: self.add_new_cars()
-    self.steps += 1
+    if self.adding_steps is None or self.steps < self.adding_steps:
+      self.add_new_cars(self.steps)
     current_cars = move_cars(self.graph, self.state, self.leading,
-        self.lastcar, FLAGS.rate, self.current_phase, self.counts)
+        self.lastcar, FLAGS.rate, self.current_phase, self.counts, self.steps)
+    self.steps += 1
     return current_cars, self.counts, self.steps >= self.total_steps, None
 
   def _reset(self):
@@ -159,16 +170,18 @@ class TrafficEnv(gym.Env):
     self.state[:,xi,1] = np.inf
     self.current_phase = np.round(
       np.random.randn(self.graph.intersections) + 0.5).astype(np.int8)
-    self.rand_car = poisson(np.random.RandomState())
+    if FLAGS.poisson: self.rand_car = poisson(np.random.RandomState())
+    else: self.rand_car = regular(np.random.RandomState())
     self.leading = np.ones(self.graph.roads, dtype=np.int32)
     self.lastcar = np.ones(self.graph.roads, dtype=np.int32)
     if self.randomized: self.graph.generate_entrypoints(np.random.randint(0b1111))
     return cars_on_roads(self.leading, self.lastcar)[:self.graph.train_roads]
 
-  def add_new_cars(self):
+  def add_new_cars(self, tick):
     car = next(self.rand_car)
     while car is not None:
-      add_car(np.random.choice(self.graph.entrypoints), car, self.state, self.leading, self.lastcar)
+      add_car(np.random.choice(self.graph.entrypoints), car,
+          self.state, self.leading, self.lastcar, tick)
       car = next(self.rand_car)
 
   def init_viewer(self):

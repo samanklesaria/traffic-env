@@ -11,6 +11,10 @@ intervals and returns an array of the sampled observations.
 action and reward spaces.
 - A simply policy gradient trainer for multidimensional spaces.
 - An asynchronous advantage actor critic trainer for multidimensional spaces.
+- Utilities for testing TrafficEnv, with a wrapper for penalizing actions that
+don't change enough, smeared rewards across intersections, zero centered
+and normalized observations. 
+
 
 Potential Points of Confusion
 =============================
@@ -30,8 +34,7 @@ a trainer's 'validate' function.
 The FLAGS object from tensorflow.app is abused to allow each
 component to specify its command line arguments.
 This is easier than centralizing all command line arguments
-and passing them each component in its constructor, which is
-the standard approach. 
+and passing them each component in its constructor.
 
 For the TrafficEnv class, we use a ring buffer to store the cars on each road. The IDM requires each
 car to have a leading car, so we introduce a fake car that the front car can follow. 
