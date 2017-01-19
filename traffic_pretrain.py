@@ -13,6 +13,7 @@ def main(_):
     FLAGS.total_episodes = 500
     traffic_test.main()
   with in_dir("training"):
+    tf.reset_default_graph()
     FLAGS.local_weight = 3
     FLAGS.change_penality = 1
     FLAGS.reward_counts = 1
