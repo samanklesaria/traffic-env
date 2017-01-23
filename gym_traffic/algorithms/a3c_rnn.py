@@ -90,18 +90,19 @@ def run(env_f):
   hack = env_f(norender=True) # We need to run an env first to compile it, because jit compilation isn't thread safe
   hack.reset()
   hack.step(hack.action_space.sample())
-  with tf.variable_scope('global'): master = A3CNet(env_f)
-  if not FLAGS.validate: 
-    if tf.gfile.Exists(FLAGS.logdir):
-      tf.gfile.DeleteRecursively(FLAGS.logdir)
-    tf.gfile.MakeDirs(FLAGS.logdir)
-    opt = tf.train.AdamOptimizer(learning_rate=FLAGS.learning_rate)
-    workers = [make_worker('w'+str(t), env_f) for t in range(FLAGS.threads)]
-    with tf.variable_scope('application'):
-      for w in workers: w.make_apply_ops(opt)
-    gw = tf.summary.FileWriter(os.path.join(FLAGS.logdir, "graph"),
-        tf.get_default_graph())
-    gw.close()
+  with tf.device("/cpu:0"): 
+      with tf.variable_scope('global'): master = A3CNet(env_f)
+      if not FLAGS.validate: 
+        if tf.gfile.Exists(FLAGS.logdir):
+          tf.gfile.DeleteRecursively(FLAGS.logdir)
+        tf.gfile.MakeDirs(FLAGS.logdir)
+        opt = tf.train.AdamOptimizer(learning_rate=FLAGS.learning_rate)
+        workers = [make_worker('w'+str(t), env_f) for t in range(FLAGS.threads)]
+        with tf.variable_scope('application'):
+          for w in workers: w.make_apply_ops(opt)
+        gw = tf.summary.FileWriter(os.path.join(FLAGS.logdir, "graph"),
+            tf.get_default_graph())
+        gw.close()
   with tf.Session() as sess:
     sess.run(tf.global_variables_initializer())
     master.load_from_checkpoint(sess,

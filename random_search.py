@@ -12,6 +12,7 @@ def main(_):
   for i in itertools.count(0):
     with in_dir("test_" + str(i)):
       print("Starting test", i)
+      tf.reset_default_graph()
       FLAGS.light_secs = np.random.randint(1, 7)
       FLAGS.warmup_lights = np.random.randint(0, 8)
       FLAGS.cooldown = np.random.uniform(0, 0.5)

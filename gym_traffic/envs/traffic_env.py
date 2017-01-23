@@ -4,9 +4,7 @@ import numpy as np
 import tensorflow as tf
 from numba import jit, jitclass, deferred_type, void, float64, float32, int64, int32, int8
 import numba
-from gym.envs.classic_control import rendering
 from gym_traffic.envs.roadgraph import grid, GridRoad
-from pyglet.gl import *
 import itertools
 import time
 
@@ -15,22 +13,6 @@ FLAGS = flags.FLAGS
 flags.DEFINE_float('local_cars_per_sec', 0.3, 'Cars entering the system per second')
 flags.DEFINE_float('rate', 0.1, 'Number of seconds between simulator ticks')
 flags.DEFINE_boolean('poisson', True, 'Should we use a Poisson distribution?')
-
-# GL_LINES wrapper
-class Lines(rendering.Geom):
-  def __init__(self, vs):
-    rendering.Geom.__init__(self)
-    self.vs = vs
-    self.linewidth = rendering.LineWidth(1)
-    self.add_attr(self.linewidth)
-
-  def render1(self):
-    glBegin(GL_LINES)
-    for p in self.vs: glVertex3f(p[0],p[1],0)
-    glEnd()
-
-  def set_linewidth(self, x):
-    self.linewidth.stroke = x
 
 # Get the rotation of a line segment
 def get_rot(line, length):
@@ -185,6 +167,25 @@ class TrafficEnv(gym.Env):
       car = next(self.rand_car)
 
   def init_viewer(self):
+    from gym.envs.classic_control import rendering
+    import pyglet.gl as gl
+
+    # GL_LINES wrapper
+    class Lines(rendering.Geom):
+      def __init__(self, vs):
+        rendering.Geom.__init__(self)
+        self.vs = vs
+        self.linewidth = rendering.LineWidth(1)
+        self.add_attr(self.linewidth)
+
+      def render1(self):
+        gl.glBegin(gl.GL_LINES)
+        for p in self.vs: gl.glVertex3f(p[0],p[1],0)
+        gl.glEnd()
+
+      def set_linewidth(self, x):
+        self.linewidth.stroke = x
+
     max_x, max_y = np.max(self.graph.locs, axis=(0,1))
     min_x, min_y = np.min(self.graph.locs, axis=(0,1))
     self.viewer = rendering.Viewer(600, 600)

@@ -17,7 +17,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_integer('episode_secs', 300, 'Secs per episode')
 flags.DEFINE_integer('light_secs', 2, 'Seconds per light')
 flags.DEFINE_float('warmup_lights', 0, 'Number of lights to choose randomly')
-flags.DEFINE_integer('cooldown', 0, 'Portion of simulation time without introducing new agents')
+flags.DEFINE_float('cooldown', 0, 'Portion of simulation time without introducing new agents')
 flags.DEFINE_integer('local_weight', 2, 'Weight to give local elements')
 flags.DEFINE_float('change_penality', 0, "How much should the network be penalized for no phase switch?")
 flags.DEFINE_integer('change_threshold', 15, "After how many iterations should penality for no change apply?")
@@ -69,12 +69,17 @@ def make_env(norender=False, randomized=True):
   return ScaleWrapper(env)
 
 def main(*_):
+  if FLAGS.restore_settings:
+    with open('settings', 'r') as f:
+      for k, v in json.load(f).items():
+        if k != 'restore': setattr(FLAGS, k, v)
+  else:
+    with open('settings', 'w') as f:
+      json.dump(FLAGS.__flags, f, indent=4, separators=(',', ': '))
   FLAGS.episode_len = int(FLAGS.episode_secs / FLAGS.light_secs)
   FLAGS.cars_per_sec = FLAGS.local_cars_per_sec * 3
   FLAGS.light_iterations = int(FLAGS.light_secs / FLAGS.rate)
   FLAGS.episode_ticks = int(FLAGS.episode_secs / FLAGS.rate)
-  with open('settings', 'w') as f:
-    json.dump(FLAGS.__flags, f, indent=4, separators=(',', ': '))
   globals()[FLAGS.trainer].run(make_env)
 
 if __name__ == '__main__':

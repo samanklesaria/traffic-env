@@ -73,29 +73,30 @@ def validate(net, env, sess):
   return reward_sum
 
 def run(env_f):
-  with tf.variable_scope('global'): master = A3CNet(env_f)
-  if not FLAGS.validate: 
-    if tf.gfile.Exists(FLAGS.logdir):
-      tf.gfile.DeleteRecursively(FLAGS.logdir)
-    tf.gfile.MakeDirs(FLAGS.logdir)
-    opt = tf.train.AdamOptimizer(learning_rate=FLAGS.learning_rate)
-    workers = [make_worker('w'+str(t), env_f) for t in range(FLAGS.threads)]
-    with tf.variable_scope('application'):
-      for w in workers: w.make_apply_ops(opt)
-    gw = tf.summary.FileWriter(os.path.join(FLAGS.logdir, "graph"),
-        tf.get_default_graph())
-    gw.close()
-  with tf.Session() as sess:
-    sess.run(tf.global_variables_initializer())
-    master.load_from_checkpoint(sess,
-        tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'global'))
-    if FLAGS.validate:
-      while True:
-        print(validate(master, master.env, sess))
-    else:
-      threads = [threading.Thread(target=work, args=[w, sess, None]) for w in workers[1:]]
-      for t in threads: t.start()
-      work(workers[0], sess, partial(master.saver.save, sess, master.checkpoint_file))
+  with tf.device("/cpu:0"):
+    with tf.variable_scope('global'): master = A3CNet(env_f)
+    if not FLAGS.validate: 
+      if tf.gfile.Exists(FLAGS.logdir):
+        tf.gfile.DeleteRecursively(FLAGS.logdir)
+      tf.gfile.MakeDirs(FLAGS.logdir)
+      opt = tf.train.AdamOptimizer(learning_rate=FLAGS.learning_rate)
+      workers = [make_worker('w'+str(t), env_f) for t in range(FLAGS.threads)]
+      with tf.variable_scope('application'):
+        for w in workers: w.make_apply_ops(opt)
+      gw = tf.summary.FileWriter(os.path.join(FLAGS.logdir, "graph"),
+          tf.get_default_graph())
+      gw.close()
+    with tf.Session() as sess:
+      sess.run(tf.global_variables_initializer())
+      master.load_from_checkpoint(sess,
+          tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'global'))
+      if FLAGS.validate:
+        while True:
+          print(validate(master, master.env, sess))
+      else:
+        threads = [threading.Thread(target=work, args=[w, sess, None]) for w in workers[1:]]
+        for t in threads: t.start()
+        work(workers[0], sess, partial(master.saver.save, sess, master.checkpoint_file))
 
 def train(sess, net, summary, xs, ys, vals, drs):
   drs[-1] = vals[-1]

@@ -8,6 +8,7 @@ flags = tf.app.flags
 FLAGS = flags.FLAGS
 flags.DEFINE_string('checkpoints', 'checkpoints', 'Checkpoint directory')
 flags.DEFINE_boolean('restore', False, "Should we restore from checkpoint")
+flags.DEFINE_boolean('restore_settings', False, "Should we restore old settings?")
 flags.DEFINE_boolean('validate', False, 'Run a validation loop without training')
 flags.DEFINE_boolean('render', False, 'Render during validation')
 flags.DEFINE_integer('episode_len', 5000, 'Number of actions per episode')
