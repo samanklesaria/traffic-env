@@ -4,13 +4,13 @@ import tensorflow as tf
 import tensorflow.contrib.layers as tl
 import os.path
 
-flags.DEFINE_integer('batch_size', 5, 'Update params every how many episodes')
+flags.DEFINE_integer('batch_size', 10, 'Update params every how many episodes')
 
 class PolGradNet(TFAgent):
   def __init__(self, env):
     super().__init__(env)
-    hidden = tl.fully_connected(self.flat_obs, num_outputs=200)
     hidden2 = tl.fully_connected(self.flat_obs, num_outputs=200)
+    # hidden2 = tl.fully_connected(hidden, num_outputs=200)
     self.score = tl.fully_connected(hidden2, num_outputs=self.num_actions, activation_fn=None)
     self.probs = tf.nn.sigmoid(self.score)
     self.avg_r = tf.placeholder(tf.float32, name="avg_r")
@@ -49,6 +49,8 @@ def run(env_f):
   ys = np.empty((FLAGS.episode_len, net.num_actions), dtype=np.float32)
   reward_sum = 0
 
+  explore = globals()[FLAGS.exploration]
+
   with tf.Session() as sess:
     sess.run(tf.global_variables_initializer())
     net.load_from_checkpoint(sess)
@@ -57,7 +59,8 @@ def run(env_f):
       observation = env.reset()
       for t in range(FLAGS.episode_len):
         tfprob, = sess.run(net.probs,feed_dict={net.observations: [observation]})
-        y = (np.random.uniform(size=tfprob.shape) < tfprob).astype(np.int8)
+        # y = (np.random.uniform(size=tfprob.shape) < tfprob).astype(np.int8)
+        y = explore(tfprob, None)
         ys[t] = y.astype(np.float32)
         xs[t] = observation
         observation, reward, done, _ = env.step(y if net.vector_action else y[0])

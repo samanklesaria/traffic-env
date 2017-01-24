@@ -12,7 +12,7 @@ flags.DEFINE_boolean('restore_settings', False, "Should we restore old settings?
 flags.DEFINE_boolean('validate', False, 'Run a validation loop without training')
 flags.DEFINE_boolean('render', False, 'Render during validation')
 flags.DEFINE_integer('episode_len', 5000, 'Number of actions per episode')
-flags.DEFINE_integer('total_episodes', 3000, 'Total number of episodes to train')
+flags.DEFINE_integer('total_episodes', 30000, 'Total number of episodes to train')
 flags.DEFINE_integer('save_rate', 100, 'Update params every how many batches')
 flags.DEFINE_string('logdir', 'summaries', 'Log directory')
 flags.DEFINE_float('gamma', 0.99, 'Discount factor')
@@ -40,6 +40,8 @@ class TFAgent:
       self.num_actions = 1
       self.vector_action = False
     self.num_inputs = np.prod(env.observation_space.shape)
+    self.episode_num = tf.Variable(0,dtype=tf.int32,name='episode_num',trainable=False)
+    self.increment_episode = tf.stop_gradient(self.episode_num.assign_add(1))
     self.observations = tf.placeholder(tf.float32, [None,*env.observation_space.shape], name="input_x")
     self.flat_obs = tf.reshape(self.observations, [-1, self.num_inputs])
 

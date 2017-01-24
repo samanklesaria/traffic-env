@@ -15,10 +15,10 @@ import gym_traffic.algorithms.random as random
 flags = tf.app.flags
 FLAGS = flags.FLAGS
 flags.DEFINE_integer('episode_secs', 300, 'Secs per episode')
-flags.DEFINE_integer('light_secs', 2, 'Seconds per light')
-flags.DEFINE_float('warmup_lights', 0, 'Number of lights to choose randomly')
-flags.DEFINE_float('cooldown', 0, 'Portion of simulation time without introducing new agents')
-flags.DEFINE_integer('local_weight', 2, 'Weight to give local elements')
+flags.DEFINE_integer('light_secs', 3, 'Seconds per light')
+flags.DEFINE_float('warmup_lights', 4, 'Number of lights to choose randomly')
+flags.DEFINE_float('cooldown', 0.2, 'Portion of simulation time without introducing new agents')
+flags.DEFINE_integer('local_weight', 3, 'Weight to give local elements')
 flags.DEFINE_float('change_penality', 0, "How much should the network be penalized for no phase switch?")
 flags.DEFINE_integer('change_threshold', 15, "After how many iterations should penality for no change apply?")
 flags.DEFINE_float('reward_counts', 1, "How much should the network be rewarded for passing cars?")
@@ -32,7 +32,7 @@ class LocalizeWrapper(gym.RewardWrapper):
 
 class ScaleWrapper(gym.RewardWrapper):
   def _reward(self, a):
-    return a / 300.0
+    return a / 100.0
 
 class ChangeWrapper(gym.Wrapper):
   def __init__(self, env):
@@ -68,11 +68,13 @@ def make_env(norender=False, randomized=True):
   if FLAGS.local_weight > 1: env = LocalizeWrapper(env)
   return ScaleWrapper(env)
 
+transients = ['validate', 'render', 'restore']
+
 def main(*_):
   if FLAGS.restore_settings:
     with open('settings', 'r') as f:
       for k, v in json.load(f).items():
-        if k != 'restore': setattr(FLAGS, k, v)
+        if k not in transients: setattr(FLAGS, k, v)
   else:
     with open('settings', 'w') as f:
       json.dump(FLAGS.__flags, f, indent=4, separators=(',', ': '))

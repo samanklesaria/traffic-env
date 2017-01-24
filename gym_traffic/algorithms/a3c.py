@@ -32,7 +32,7 @@ class A3CNet(TFAgent):
     self.target_v = tf.placeholder(tf.float32, [None, self.num_actions], name="target_v")
     self.input_y = tf.placeholder(tf.float32, [None, self.num_actions], name="actions")
     self.advantages = tf.placeholder(tf.float32, [None, self.num_actions], name="advantages")
-    policy_loss = tf.reduce_mean(self.advantages *
+    policy_loss = tf.reduce_sum(self.advantages *
         tf.nn.sigmoid_cross_entropy_with_logits(self.score, self.input_y))
     value_loss = 0.5 * tf.reduce_sum(tf.square(self.target_v - self.value))
     entropy = - tf.reduce_sum(self.probs * tf.log(self.probs))
@@ -110,7 +110,7 @@ def train(sess, net, summary, xs, ys, vals, drs):
 
 def work(net, sess, save):
   writer = tf.summary.FileWriter(os.path.join(FLAGS.logdir, net.name))
-  ys = np.empty((FLAGS.a3c_batch, net.num_actions), dtype=np.int32)
+  ys = np.empty((FLAGS.a3c_batch, net.num_actions), dtype=np.float32)
   vals = np.empty((FLAGS.a3c_batch + 1, net.num_actions), dtype=np.float32)
   xs = np.empty((FLAGS.a3c_batch, *net.env.observation_space.shape), dtype=np.float32)
   drs = np.empty((FLAGS.a3c_batch + 1, net.num_actions), dtype=np.float32)
@@ -132,7 +132,7 @@ def work(net, sess, save):
       xs[t] = obs
       vals[t] = v[0]
       obs, reward, done, _ = net.env.step(y if net.vector_action else y[0])
-      drs[t] = reward
+      drs[t] = reward / 100.0
       episode_reward += np.sum(reward)
       if t == FLAGS.a3c_batch - 1 and not done:
         vals[-1] = sess.run(net.value, feed_dict={net.observations: [obs]})[0]

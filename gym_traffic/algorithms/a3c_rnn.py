@@ -22,10 +22,8 @@ class A3CNet(TFAgent):
     self.name = tf.get_variable_scope().name
     self.env = env_f()
     super().__init__(self.env)
-    hidden = tl.fully_connected(self.flat_obs, num_outputs=150,
-        normalizer_fn=tl.batch_norm, normalizer_params={'updates_collections': None})
-    hidden2 = tl.fully_connected(hidden, num_outputs=150,
-        normalizer_fn=tl.batch_norm, normalizer_params={'updates_collections': None})
+    hidden = tl.fully_connected(self.flat_obs, num_outputs=150)
+    hidden2 = tl.fully_connected(hidden, num_outputs=150)
     lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(150,state_is_tuple=True)
     self.c_init = np.zeros((1, lstm_cell.state_size.c), np.float32)
     self.h_init = np.zeros((1, lstm_cell.state_size.h), np.float32)
@@ -44,11 +42,11 @@ class A3CNet(TFAgent):
     self.target_v = tf.placeholder(tf.float32, [None, self.num_actions], name="target_v")
     self.input_y = tf.placeholder(tf.float32, [None, self.num_actions], name="actions")
     self.advantages = tf.placeholder(tf.float32, [None, self.num_actions], name="advantages")
-    policy_loss = tf.reduce_mean(self.advantages *
+    policy_loss = tf.reduce_sum(self.advantages *
         tf.nn.sigmoid_cross_entropy_with_logits(self.score, self.input_y))
     value_loss = 0.5 * tf.reduce_sum(tf.square(self.target_v - self.value))
     entropy = - tf.reduce_sum(self.probs * tf.log(self.probs))
-    loss = 0.5 * value_loss + policy_loss - entropy * 0.01
+    loss = 0.5 * value_loss + policy_loss # - entropy * 0.01
     tf.summary.scalar("loss", loss)
     tf.summary.scalar("entropy", entropy)
     tf.summary.scalar("value_loss", value_loss)
@@ -91,18 +89,18 @@ def run(env_f):
   hack.reset()
   hack.step(hack.action_space.sample())
   with tf.device("/cpu:0"): 
-      with tf.variable_scope('global'): master = A3CNet(env_f)
-      if not FLAGS.validate: 
-        if tf.gfile.Exists(FLAGS.logdir):
-          tf.gfile.DeleteRecursively(FLAGS.logdir)
-        tf.gfile.MakeDirs(FLAGS.logdir)
-        opt = tf.train.AdamOptimizer(learning_rate=FLAGS.learning_rate)
-        workers = [make_worker('w'+str(t), env_f) for t in range(FLAGS.threads)]
-        with tf.variable_scope('application'):
-          for w in workers: w.make_apply_ops(opt)
-        gw = tf.summary.FileWriter(os.path.join(FLAGS.logdir, "graph"),
-            tf.get_default_graph())
-        gw.close()
+    with tf.variable_scope('global'): master = A3CNet(env_f)
+    if not FLAGS.validate: 
+      if tf.gfile.Exists(FLAGS.logdir):
+        tf.gfile.DeleteRecursively(FLAGS.logdir)
+      tf.gfile.MakeDirs(FLAGS.logdir)
+      opt = tf.train.AdamOptimizer(learning_rate=FLAGS.learning_rate)
+      workers = [make_worker('w'+str(t), env_f) for t in range(FLAGS.threads)]
+      with tf.variable_scope('application'):
+        for w in workers: w.make_apply_ops(opt)
+      gw = tf.summary.FileWriter(os.path.join(FLAGS.logdir, "graph"),
+          tf.get_default_graph())
+      gw.close()
   with tf.Session() as sess:
     sess.run(tf.global_variables_initializer())
     master.load_from_checkpoint(sess,
@@ -128,7 +126,7 @@ def train(sess, net, summary, xs, ys, vals, drs):
 
 def work(net, sess, save):
   writer = tf.summary.FileWriter(os.path.join(FLAGS.logdir, net.name))
-  ys = np.empty((FLAGS.a3c_batch, net.num_actions), dtype=np.int32)
+  ys = np.empty((FLAGS.a3c_batch, net.num_actions), dtype=np.float32)
   vals = np.empty((FLAGS.a3c_batch + 1, net.num_actions), dtype=np.float32)
   xs = np.empty((FLAGS.a3c_batch, *net.env.observation_space.shape), dtype=np.float32)
   drs = np.empty((FLAGS.a3c_batch + 1, net.num_actions), dtype=np.float32)
@@ -139,6 +137,7 @@ def work(net, sess, save):
   explore = globals()[FLAGS.exploration]
 
   for e in range(FLAGS.total_episodes):
+    episode_num = sess.run(net.episode_num)
     sess.run(net.update_local)
     obs = net.env.reset()
     episode_reward = 0
@@ -152,7 +151,7 @@ def work(net, sess, save):
       xs[t] = obs
       vals[t] = v[0]
       obs, reward, done, _ = net.env.step(y if net.vector_action else y[0])
-      drs[t] = reward
+      drs[t] = reward / 100.0
       episode_reward += np.sum(reward)
       if t == FLAGS.a3c_batch - 1 and not done:
         vals[-1] = sess.run(net.value, feed_dict={net.observations: [obs],
@@ -164,7 +163,7 @@ def work(net, sess, save):
       vals[t+1] = 0 if done else sess.run(net.value, feed_dict={
         net.observations: [obs], net.c_in: rnn_state[0], net.h_in: rnn_state[1]})[0,0]
       s = train(sess, net, net.summary, xs[:t+1], ys[:t+1], vals[:t+2], drs[:t+2])
-      writer.add_summary(s, e)
+      writer.add_summary(s, episode_num)
       epsilon -= (epsilon - end_epsilon) / (FLAGS.total_episodes - e)
 
     episode_rewards[e % FLAGS.report_rate] = episode_reward
@@ -172,9 +171,10 @@ def work(net, sess, save):
       reward_mean = np.mean(episode_rewards)
       print("Reward mean", reward_mean)
       s = sess.run(net.avg_summary, feed_dict={net.avg_r:reward_mean})
-      writer.add_summary(s, e)
-
+      writer.add_summary(s, episode_num)
+    
     if ((e % FLAGS.save_rate) == 0 or e == FLAGS.total_episodes - 1) \
         and threading.current_thread() == threading.main_thread():
       print("Saving")
       save()
+    sess.run(net.increment_episode)
