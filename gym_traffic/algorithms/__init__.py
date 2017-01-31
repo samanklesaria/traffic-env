@@ -7,20 +7,25 @@ import os
 flags = tf.app.flags
 FLAGS = flags.FLAGS
 flags.DEFINE_string('checkpoints', 'checkpoints', 'Checkpoint directory')
+flags.DEFINE_boolean('weights', False, "Should we just print the saved weights?")
 flags.DEFINE_boolean('restore', False, "Should we restore from checkpoint")
-flags.DEFINE_boolean('restore_settings', False, "Should we restore old settings?")
+flags.DEFINE_boolean('print_discounted', False, "Should we print total episode rewards discounted")
+flags.DEFINE_boolean('save_settings', False, "Should we save settings")
 flags.DEFINE_boolean('validate', False, 'Run a validation loop without training')
 flags.DEFINE_boolean('render', False, 'Render during validation')
 flags.DEFINE_integer('episode_len', 5000, 'Number of actions per episode')
-flags.DEFINE_integer('total_episodes', 30000, 'Total number of episodes to train')
-flags.DEFINE_integer('save_rate', 100, 'Update params every how many batches')
+flags.DEFINE_integer('total_episodes', 3000, 'Total number of episodes to train')
+flags.DEFINE_integer('save_rate', 400, 'Update params every how many batches')
 flags.DEFINE_string('logdir', 'summaries', 'Log directory')
 flags.DEFINE_float('gamma', 0.99, 'Discount factor')
-flags.DEFINE_float('learning_rate', 1e-4, 'Learning rate')
-flags.DEFINE_integer('summary_rate', 5, 'Show summary every how many episodes')
+flags.DEFINE_float('learning_rate', 0.1, 'Learning rate')
+flags.DEFINE_integer('summary_rate', 10, 'Show summary every how many episodes')
 flags.DEFINE_integer('validate_rate', 5, 'Validate every how many episodes')
-flags.DEFINE_string('trainer', "a3c", 'Training algorithm to use')
+flags.DEFINE_string('trainer', "polgrad_conv", 'Training algorithm to use')
 flags.DEFINE_string('exploration', "proportional", 'Exploration strategy to use')
+flags.DEFINE_integer('batch_size', 30, 'Update params every how many episodes')
+flags.DEFINE_float('lam', 0.97, 'Lambda used in Generalized Advantage Estimation')
+flags.DEFINE_integer('threads', 4, 'Number of different threads to use')
 
 class in_dir:
   def __init__(self, dirname): self.dirname = dirname
@@ -43,12 +48,11 @@ class TFAgent:
     self.episode_num = tf.Variable(0,dtype=tf.int32,name='episode_num',trainable=False)
     self.increment_episode = tf.stop_gradient(self.episode_num.assign_add(1))
     self.observations = tf.placeholder(tf.float32, [None,*env.observation_space.shape], name="input_x")
-    self.flat_obs = tf.reshape(self.observations, [-1, self.num_inputs])
 
   def load_from_checkpoint(self, sess, var_list=None):
     tf.gfile.MakeDirs(FLAGS.checkpoints)
     self.checkpoint_file = os.path.join(FLAGS.checkpoints, "model.ckpt")
-    self.saver = tf.train.Saver(var_list)
+    self.saver = tf.train.Saver(var_list, keep_checkpoint_every_n_hours=1)
     if FLAGS.restore:
       ckpt = tf.train.get_checkpoint_state(FLAGS.checkpoints)
       self.saver.restore(sess, ckpt.model_checkpoint_path)
@@ -61,6 +65,10 @@ def e_greedy(probs, epsilon):
 
 def proportional(probs, epsilon):
   return (np.random.uniform(size=probs.shape) < probs).astype(np.int)
+
+def centered(probs, epsilon):
+  shifted = (epsilon * 0.5 + (1 - epsilon) * probs) / 2
+  return (np.random.uniform(size=shifted.shape) < shifted).astype(np.int)
 
 # Disount future rewards
 @jit("void(float32[:,:], float32)", nopython=True, nogil=True)

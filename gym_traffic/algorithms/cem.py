@@ -9,6 +9,10 @@ flags.DEFINE_float('elite_frac', 0.2, 'Portion of highest samples to keep')
 flags.DEFINE_integer('sample_size', 40, 'Number of samples each round')
 flags.DEFINE_integer('n_iter', 20, 'Number of times to sample')
 flags.DEFINE_integer('num_tries', 1, 'Number of rollouts per sample')
+flags.DEFINE_boolean('restore_cem', True, 'Whether to restore the model')
+
+# TODO: interpret resulting model
+# TODO: pickling
 
 def cem(f, th_mean, initial_std=10.0):
   n_elite = int(np.round(FLAGS.sample_size*FLAGS.elite_frac))
@@ -32,10 +36,12 @@ def noisy_evaluation(env, theta, tries=1, steps=200):
   total_rew = 0
   for _ in range(tries):
     ob = env.reset()
+    multiplier = 1.0
     for t in range(steps):
       a = (ob.reshape(-1).dot(theta) < 0).astype(np.int8)
       ob, reward, done, _ = env.step(a)
-      total_rew += reward
+      total_rew += reward * multiplier
+      multiplier *= FLAGS.gamma
       if done: break
   return total_rew / tries
 
@@ -45,4 +51,4 @@ def run(env_f):
   except: shape = env.observation_space.shape
   result, th_mean, th_std = cem(partial(noisy_evaluation, env,
     tries=FLAGS.num_tries, steps=FLAGS.episode_len), np.zeros(shape))
-  # print("th mean", th_mean)
+  print("th mean", th_mean)

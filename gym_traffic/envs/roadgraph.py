@@ -1,21 +1,8 @@
-from numba import jit, jitclass, deferred_type, void, float64, float32, int64, int32, int8
+from numba import jit, void, float64, float32, int64, int32, int8
 import numpy as np
 
-# Storage for grid graph
-spec = [
-    ('intersections', int64),
-    ('train_roads', int64),
-    ('roads', int64),
-    ('entrypoints', int64[:]),
-    ('locs', float32[:,:,:]),
-    ('phases', int8[:]),
-    ('dest', int64[:]),
-    ('len', float32),
-    ('n', int64),
-    ('m', int64)]
-
 # Return an array of road locations for a grid road network
-@jit(float32[:,:,:](float64,int64,int64,int64,int64), nopython=True, nogil=True)
+@jit(float32[:,:,:](float64,int64,int64,int64,int64), nopython=True,nogil=True,cache=True)
 def get_locs_gridroad(eps,m,n,v,roads):
     locs = np.empty((roads,2,2), dtype=np.float32)
     for i in range(roads):
@@ -35,7 +22,6 @@ def get_locs_gridroad(eps,m,n,v,roads):
     return locs
 
 # A graph representing a 2D grid with no turns
-@jitclass(spec)
 class GridRoad:
     def __init__(self, m, n, l):
         self.len = l
@@ -47,7 +33,8 @@ class GridRoad:
         self.intersections = v
         self.locs = l * get_locs_gridroad(0.02,m,n,v,self.roads)
         self.phases = (np.arange(self.roads) // v < 2).astype(np.int8)
-        self.dest = np.empty(self.roads, dtype=np.int64)
+        self.dest = np.empty(self.roads, dtype=np.int32)
+        self.nexts = np.array(list(map(self.get_next, range(self.roads))), dtype=np.int32)
         for i in range(self.roads):
             self.dest[i] = i%v if i<4*v else -1
 
@@ -56,19 +43,15 @@ class GridRoad:
         n = self.n
         m = self.m
         v = m * n
-        emp = np.empty(0,dtype=np.int64)
+        emp = np.empty(0,dtype=np.int32)
         self.entrypoints = np.concatenate((
             n*np.arange(m) if (choices & 1) == 0 else emp,
             v+n*np.arange(1,m+1)-1 if ((choices >> 1) & 1) == 0 else emp,
             2*v+np.arange(n) if ((choices >> 2) & 1) == 0 else emp,
-            3*v+n*(m-1)+np.arange(n) if ((choices >> 3) & 1) == 0 else emp))
+            3*v+n*(m-1)+np.arange(n) if ((choices >> 3) & 1) == 0 else emp)).astype(np.int32)
                 
-    # Get the length of road e
-    def length(self, e):
-        return self.len
-
     # Return the road a car should go to after road i, or -1
-    def next(self, i):
+    def get_next(self, i):
         v = self.intersections
         n = self.n
         m = self.m
@@ -81,13 +64,10 @@ class GridRoad:
         return i-n if row > 0 else 4*v+col
 
 # Convert a signal defined on roads to one defined on intersections
-@jit(nopython=True, nogil=True)
-def roads_to_intersections(graph, road_cars):
-    result = np.zeros(graph.intersections, dtype=np.float32)
-    for i in range(graph.train_roads):
-        result[graph.dest[i]] += roadcars[i]
+@jit(float32[:](int32,int32[:],float32[:]), nopython=True,nogil=True,cache=True)
+def by_intersection(intersections,dests,road_cars):
+    result = np.zeros(intersections, dtype=np.float32)
+    for i in range(road_cars.shape[0]):
+        result[dests[i]] += road_cars[i]
     return result
-
-grid = deferred_type()
-grid.define(GridRoad.class_type.instance_type)
 

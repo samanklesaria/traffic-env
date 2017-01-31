@@ -6,8 +6,6 @@ import threading
 import os.path
 from functools import partial
 
-EPS = 1e-6
-
 # Copy one set of variables to another
 def update_target_graph(from_scope, to_scope):
   return [dst.assign(src) for src, dst in zip(
@@ -24,14 +22,11 @@ class A3CNet(TFAgent):
     dims = self.env.observation_space.shape[-2:]
     flat_obs = tf.reshape(self.observations, [-1, channels, *dims])
     nhwc = tf.transpose(flat_obs, perm=[0,2,3,1])
-    local = tl.convolution(nhwc, 30, [1,1])
-    reshaped = tf.reshape(local, [-1, 30*self.num_actions])
-    resid_a = tl.fully_connected(reshaped, 30*self.num_actions)
-    resid_b = tl.fully_connected(resid_a, 30*self.num_actions, activation_fn=None)
-    mid = tf.nn.relu(reshaped + resid_b)
-    self.score = tl.fully_connected(mid, self.num_actions, activation_fn=None)
+    local = tl.convolution(nhwc, 1, [1,1], biases_initializer=None, activation_fn=None)
+    self.score = tf.reshape(local, [-1, self.num_actions])
+    self.value = tl.fully_connected(tf.reshape(nhwc, [-1, self.num_inputs]),
+        self.num_actions, activation_fn=None)
     self.probs = tf.nn.sigmoid(self.score)
-    self.value = tl.fully_connected(mid, num_outputs=self.num_actions, activation_fn=None)
   
   def make_train_ops(self):
     self.update_local = update_target_graph('global', self.name)
@@ -41,7 +36,7 @@ class A3CNet(TFAgent):
     policy_loss = tf.reduce_sum(self.advantages *
         tf.nn.sigmoid_cross_entropy_with_logits(self.score, self.input_y))
     value_loss = 0.5 * tf.reduce_sum(tf.square(self.target_v - self.value))
-    entropy = -tf.reduce_mean(tf.reduce_sum(self.probs * tf.log(self.probs + EPS), axis=1))
+    entropy = -tf.reduce_mean(tf.reduce_sum(self.probs * tf.log(self.probs), axis=1))
     loss = 0.5 * value_loss + policy_loss - entropy * 0.001
     tf.summary.scalar("loss", loss)
     tf.summary.scalar("entropy", entropy)
@@ -49,7 +44,7 @@ class A3CNet(TFAgent):
     tf.summary.scalar("policy_loss", policy_loss)
     local_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, tf.get_variable_scope().name)
     gradients = tf.gradients(loss,local_vars)
-    self.grads = [tf.clip_by_value(g, -5, 5) for g in gradients]
+    self.grads = [tf.clip_by_value(g, -10, 10) for g in gradients]
     self.summary = tf.summary.merge(
             tf.get_collection(tf.GraphKeys.SUMMARIES, self.name))
     self.avg_r = tf.placeholder(tf.float32, name="avg_r")
@@ -68,18 +63,20 @@ def make_worker(name, env_f):
 def validate(net, env, sess):
   reward_sum = 0
   obs = env.reset()
-  multiplier = 1.0
   for _ in range(FLAGS.episode_len):
     dist, = sess.run(net.probs, feed_dict={net.observations: [obs]})
     if FLAGS.render: print("Action", dist)
     y = np.round(dist)
     obs, reward, done, _ = env.step(y if net.vector_action else y[0])
-    reward_sum += np.mean(reward) * (multiplier if FLAGS.print_discounted else 1)
-    multiplier *= FLAGS.gamma
+    reward_sum += np.sum(reward)
     if done: break
   return reward_sum
 
 def run(env_f):
+  hack = env_f(norender=True)
+  hack.reset()
+  hack.step(hack.action_space.sample())
+  del hack
   with tf.device("/cpu:0"):
     with tf.variable_scope('global'): master = A3CNet(env_f)
     if not FLAGS.validate: 
@@ -143,9 +140,8 @@ def work(net, sess, save):
         xs[t] = obs
         vals[t] = v[0]
         obs, reward, done, _ = net.env.step(y if net.vector_action else y[0])
-        drs[t] = reward
-        episode_reward += np.mean(reward) * (
-            multiplier if FLAGS.print_discounted else 1)
+        drs[t] = reward 
+        episode_reward += np.mean(reward) * multiplier
         multiplier *= FLAGS.gamma
         if t == FLAGS.batch_size - 1 and not done:
           vals[-1] = sess.run(net.value, feed_dict={net.observations: [obs]})[0]

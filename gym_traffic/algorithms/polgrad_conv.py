@@ -4,23 +4,30 @@ import tensorflow as tf
 import tensorflow.contrib.layers as tl
 import os.path
 
+EPS = 1e-6
+
 class PolGradNet(TFAgent):
   def __init__(self, env):
     super().__init__(env)
-    flat_obs = tf.reshape(self.observations, [-1, self.num_inputs])
-    hidden2 = flat_obs # tl.fully_connected(self.flat_obs, num_outputs=200)
-    # hidden2 = tl.fully_connected(hidden, num_outputs=200)
-    self.score = tl.fully_connected(hidden2, num_outputs=self.num_actions,
-        biases_initializer=None, activation_fn=None)
+    channels = np.prod(env.observation_space.shape[:-2])
+    dims = env.observation_space.shape[-2:]
+    flat_obs = tf.reshape(self.observations, [-1, channels, *dims])
+    nhwc = tf.transpose(flat_obs, perm=[0,2,3,1])
+    local = tl.convolution(nhwc, 30, [1,1])
+    reshaped = tf.reshape(local, [-1, 30*self.num_actions])
+    resid_a = tl.fully_connected(reshaped, self.num_actions)
+    resid_b = tl.fully_connected(resid_a, 30*self.num_actions, activation_fn=None)
+    mid = tf.nn.relu(resid_b + reshaped)
+    self.score = tl.fully_connected(mid, self.num_actions, activation_fn=None)
     self.probs = tf.nn.sigmoid(self.score)
-    entropy = -tf.reduce_mean(tf.reduce_sum(self.probs * tf.log(self.probs), axis=1))
+    entropy = -tf.reduce_mean(tf.reduce_sum(self.probs * tf.log(self.probs + EPS), axis=1))
     tf.summary.scalar("entropy", entropy)
     self.avg_r = tf.placeholder(tf.float32, name="avg_r")
     tf.summary.scalar("avg_r_summary", self.avg_r)
     self.input_y = tf.placeholder(tf.float32, [None, self.num_actions], name="input_y")
     self.advantages = tf.placeholder(tf.float32, [None, self.num_actions], name="reward_signal")
     loss = tf.reduce_mean(self.advantages *
-        tf.nn.sigmoid_cross_entropy_with_logits(self.score, self.input_y))
+        tf.nn.sigmoid_cross_entropy_with_logits(self.score, self.input_y)) - 0.001 * entropy
     tf.summary.scalar("loss", loss)
     opt = tf.train.AdamOptimizer(learning_rate=FLAGS.learning_rate) 
     grads = [(tf.Variable(tf.zeros(v.get_shape()), trainable=False), g, v)
@@ -29,8 +36,6 @@ class PolGradNet(TFAgent):
     self.train = [ng.assign_add(g) for (ng, g, _) in grads]
     self.apply_grads = opt.apply_gradients([(ng, v) for (ng, _, v) in grads])
     self.summary = tf.summary.merge_all()
-
-EPS = 1e-6
 
 def run(env_f):
   env = env_f()
@@ -42,10 +47,12 @@ def run(env_f):
       sess.run(net.reset)
       while True:
         print("Validation reward", validate(net, env, sess))
-  if tf.gfile.Exists(FLAGS.logdir):
-    tf.gfile.DeleteRecursively(FLAGS.logdir)
-  tf.gfile.MakeDirs(FLAGS.logdir)
-  writer = tf.summary.FileWriter(os.path.join(FLAGS.logdir, "polgrad"))
+  if not FLAGS.restore:
+    if tf.gfile.Exists(FLAGS.logdir):
+      tf.gfile.DeleteRecursively(FLAGS.logdir)
+    tf.gfile.MakeDirs(FLAGS.logdir)
+  writer = tf.summary.FileWriter(os.path.join(FLAGS.logdir, "polgrad"),
+      tf.get_default_graph())
   xs = np.empty((FLAGS.episode_len, *env.observation_space.shape), dtype=np.float32)
   drs = np.empty((FLAGS.episode_len, net.num_actions), dtype=np.float32)
   ys = np.empty((FLAGS.episode_len, net.num_actions), dtype=np.float32)

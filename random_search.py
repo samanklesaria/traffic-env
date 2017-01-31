@@ -13,6 +13,7 @@ def main(_):
     with in_dir("test_" + str(i)):
       print("Starting test", i)
       tf.reset_default_graph()
+      FLAGS.save_settings = True
       FLAGS.light_secs = np.random.randint(1, 7)
       FLAGS.warmup_lights = np.random.randint(0, 8)
       FLAGS.cooldown = np.random.uniform(0, 0.5)
@@ -25,7 +26,6 @@ def main(_):
       FLAGS.normalize_obs = bool(random.getrandbits(1))
       FLAGS.change_penalty = 50 * np.random.randint(0, 2)
       FLAGS.change_threshold = 45 // FLAGS.light_secs
-      np.random.randn
       traffic_test.main()
 
 if __name__ == '__main__':

@@ -6,10 +6,6 @@ import threading
 import os.path
 from functools import partial
 
-flags.DEFINE_integer('threads', 4, 'Number of different threads to use')
-flags.DEFINE_integer('a3c_batch', 30, 'Length of episode buffer')
-flags.DEFINE_integer('report_rate', 5, 'Rate to print average reward')
-
 # Copy one set of variables to another
 def update_target_graph(from_scope, to_scope):
   return [dst.assign(src) for src, dst in zip(
@@ -22,7 +18,8 @@ class A3CNet(TFAgent):
     self.name = tf.get_variable_scope().name
     self.env = env_f()
     super().__init__(self.env)
-    hidden = tl.fully_connected(self.flat_obs, num_outputs=150)
+    flat_obs = tf.reshape(self.observations, [-1, self.num_inputs])
+    hidden = tl.fully_connected(flat_obs, num_outputs=150)
     hidden2 = tl.fully_connected(hidden, num_outputs=150)
     lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(150,state_is_tuple=True)
     self.c_init = np.zeros((1, lstm_cell.state_size.c), np.float32)
@@ -45,16 +42,17 @@ class A3CNet(TFAgent):
     policy_loss = tf.reduce_sum(self.advantages *
         tf.nn.sigmoid_cross_entropy_with_logits(self.score, self.input_y))
     value_loss = 0.5 * tf.reduce_sum(tf.square(self.target_v - self.value))
-    entropy = - tf.reduce_sum(self.probs * tf.log(self.probs))
-    loss = 0.5 * value_loss + policy_loss # - entropy * 0.01
+    entropy = - tf.reduce_mean(tf.reduce_sum(self.probs * tf.log(self.probs), axis=1))
+    loss = 0.5 * value_loss + policy_loss - entropy * 0.01
     tf.summary.scalar("loss", loss)
     tf.summary.scalar("entropy", entropy)
     tf.summary.scalar("value_loss", value_loss)
     tf.summary.scalar("policy_loss", policy_loss)
     local_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, tf.get_variable_scope().name)
     gradients = tf.gradients(loss,local_vars)
-    self.grads, grad_norms = tf.clip_by_global_norm(gradients,40.0)
-    tf.summary.scalar("grad_norm", grad_norms)
+    # self.grads, grad_norms = tf.clip_by_global_norm(gradients,40.0)
+    # tf.summary.scalar("grad_norm", grad_norms)
+    self.grads = [tf.clip_by_value(g, -10, 10) for g in gradients]
     self.summary = tf.summary.merge(
             tf.get_collection(tf.GraphKeys.SUMMARIES, self.name))
     self.avg_r = tf.placeholder(tf.float32, name="avg_r")
@@ -85,9 +83,6 @@ def validate(net, env, sess):
   return reward_sum
 
 def run(env_f):
-  hack = env_f(norender=True) # We need to run an env first to compile it, because jit compilation isn't thread safe
-  hack.reset()
-  hack.step(hack.action_space.sample())
   with tf.device("/cpu:0"): 
     with tf.variable_scope('global'): master = A3CNet(env_f)
     if not FLAGS.validate: 
@@ -117,7 +112,7 @@ def train(sess, net, summary, xs, ys, vals, drs):
   drs[-1] = vals[-1]
   advantages = drs[:-1] + FLAGS.gamma * vals[1:] - vals[:-1]
   discount(drs, FLAGS.gamma)
-  discount(advantages, FLAGS.gamma)
+  discount(advantages, FLAGS.lam * FLAGS.gamma)
   fd = {net.observations: xs, net.input_y: ys,
     net.advantages: advantages, net.target_v: drs[:-1],
     net.c_in: net.c_init, net.h_in: net.h_init}
@@ -126,11 +121,11 @@ def train(sess, net, summary, xs, ys, vals, drs):
 
 def work(net, sess, save):
   writer = tf.summary.FileWriter(os.path.join(FLAGS.logdir, net.name))
-  ys = np.empty((FLAGS.a3c_batch, net.num_actions), dtype=np.float32)
-  vals = np.empty((FLAGS.a3c_batch + 1, net.num_actions), dtype=np.float32)
-  xs = np.empty((FLAGS.a3c_batch, *net.env.observation_space.shape), dtype=np.float32)
-  drs = np.empty((FLAGS.a3c_batch + 1, net.num_actions), dtype=np.float32)
-  episode_rewards = np.zeros(FLAGS.report_rate, dtype=np.float32)
+  ys = np.empty((FLAGS.batch_size, net.num_actions), dtype=np.float32)
+  vals = np.empty((FLAGS.batch_size + 1, net.num_actions), dtype=np.float32)
+  xs = np.empty((FLAGS.batch_size, *net.env.observation_space.shape), dtype=np.float32)
+  drs = np.empty((FLAGS.batch_size + 1, net.num_actions), dtype=np.float32)
+  episode_rewards = np.zeros(FLAGS.summary_rate, dtype=np.float32)
   epsilon = 1
   end_epsilon = np.random.uniform(0.05, 0.2)
   print("Started worker", net.name, "with target epsilon", end_epsilon)
@@ -143,7 +138,7 @@ def work(net, sess, save):
     episode_reward = 0
     rnn_state = [net.c_init, net.h_init]
     for mt in range(FLAGS.episode_len):
-      t = mt % FLAGS.a3c_batch
+      t = mt % FLAGS.batch_size
       tfprob,v,rnn_state = sess.run([net.probs,net.value,net.lstm_state], feed_dict={
           net.c_in: rnn_state[0], net.h_in: rnn_state[1], net.observations:[obs]})
       y = explore(tfprob[0], epsilon)
@@ -153,21 +148,21 @@ def work(net, sess, save):
       obs, reward, done, _ = net.env.step(y if net.vector_action else y[0])
       drs[t] = reward / 100.0
       episode_reward += np.sum(reward)
-      if t == FLAGS.a3c_batch - 1 and not done:
+      if t == FLAGS.batch_size - 1 and not done:
         vals[-1] = sess.run(net.value, feed_dict={net.observations: [obs],
           net.c_in: rnn_state[0], net.h_in: rnn_state[1]})[0]
         train(sess, net, None, xs, ys, vals, drs)
         sess.run(net.update_local)
       if done: break
-    if t != FLAGS.a3c_batch - 1 or done:
+    if t != FLAGS.batch_size - 1 or done:
       vals[t+1] = 0 if done else sess.run(net.value, feed_dict={
         net.observations: [obs], net.c_in: rnn_state[0], net.h_in: rnn_state[1]})[0,0]
       s = train(sess, net, net.summary, xs[:t+1], ys[:t+1], vals[:t+2], drs[:t+2])
       writer.add_summary(s, episode_num)
       epsilon -= (epsilon - end_epsilon) / (FLAGS.total_episodes - e)
 
-    episode_rewards[e % FLAGS.report_rate] = episode_reward
-    if e % FLAGS.report_rate == FLAGS.report_rate - 1:
+    episode_rewards[e % FLAGS.summary_rate] = episode_reward
+    if e % FLAGS.summary_rate == FLAGS.summary_rate - 1:
       reward_mean = np.mean(episode_rewards)
       print("Reward mean", reward_mean)
       s = sess.run(net.avg_summary, feed_dict={net.avg_r:reward_mean})
@@ -176,5 +171,5 @@ def work(net, sess, save):
     if ((e % FLAGS.save_rate) == 0 or e == FLAGS.total_episodes - 1) \
         and threading.current_thread() == threading.main_thread():
       print("Saving")
-      save()
+      save(global_step=episode_num)
     sess.run(net.increment_episode)

@@ -15,8 +15,10 @@ def profile_it():
 def main(_):
   global env
   FLAGS.episode_len = int(FLAGS.episode_secs / FLAGS.light_secs)
-  FLAGS.cars_per_sec = FLAGS.local_cars_per_sec * 3
-  env = traffic_test.make_env(norender=True, randomized=False)
+  FLAGS.cars_per_sec = FLAGS.local_cars_per_sec * 12 
+  FLAGS.light_iterations = int(FLAGS.light_secs / FLAGS.rate)
+  FLAGS.episode_ticks = int(FLAGS.episode_secs / FLAGS.rate)
+  env = traffic_test.make_env()
   profile_it()
   cProfile.run("profile_it()", "prof_bin")
 

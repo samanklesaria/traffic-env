@@ -9,9 +9,10 @@ def StrobeWrapper(repeat_count, num_samples):
             self.sample_size = self.repeat_count // num_samples
             assert self.sample_size * num_samples == self.repeat_count
             self.history = np.empty((num_samples, *self.env.observation_space.shape), dtype=np.float32)
+            oldshape = self.env.observation_space.low.shape
             self.observation_space = gym.spaces.Box(
-              np.tile(self.env.observation_space.low, (num_samples, 1)),
-              np.tile(self.env.observation_space.high, (num_samples, 1)))
+              np.broadcast_to(self.env.observation_space.low, (num_samples, *oldshape)),
+              np.broadcast_to(self.env.observation_space.high, (num_samples, *oldshape)))
 
         def _step(self, action):
             done = False
