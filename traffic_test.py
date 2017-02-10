@@ -19,7 +19,7 @@ import gym_traffic.algorithms.greedy as greedy
 
 flags = tf.app.flags
 FLAGS = flags.FLAGS
-flags.DEFINE_integer('episode_secs', 1000, 'Secs per episode')
+flags.DEFINE_integer('episode_secs', 600, 'Secs per episode')
 flags.DEFINE_integer('light_secs', 5, 'Seconds per light')
 flags.DEFINE_float('warmup_lights', 1, 'Number of lights to choose randomly')
 flags.DEFINE_float('cooldown', 0, 'Portion of simulation time without introducing new agents')
@@ -31,6 +31,7 @@ flags.DEFINE_float('reward_counts', 1, "How much should the network be rewarded 
 flags.DEFINE_float('waiting_penalty', 0, "How much should the network be penalized for waiting cars?")
 flags.DEFINE_boolean('normalize_obs', False, "Should we normalize observations?")
 flags.DEFINE_boolean('scale_rewards', True, "Should we scale rewards?")
+flags.DEFINE_boolean('learn_switch', True, "Learn switches, not phases")
 
 EPS = 1e-8
 
@@ -42,6 +43,11 @@ class LocalizeWrapper(gym.RewardWrapper):
 class ScaleWrapper(gym.RewardWrapper):
   def _reward(self, reward):
     return reward / 50
+
+class SwitchActionWrapper(gym.ActionWrapper):
+  def _action(self, action):
+    return np.logical_xor(self.unwrapped.current_phase,
+      np.array(action).astype(np.int8))
 
 class WaitingWrapper(gym.Wrapper):
   def _step(self, action):
@@ -74,7 +80,7 @@ class ObsNormWrapper(gym.ObservationWrapper):
 
 def make_env():
   env = gym.make('traffic-v0')
-  env.set_graph(GridRoad(4,4,8))
+  env.set_graph(GridRoad(3,3,7))
   if FLAGS.render: env.rendering = True
   if FLAGS.waiting_penalty > 0: env = WaitingWrapper(env)
   env = StrobeWrapper(FLAGS.light_iterations, 5)(env)
@@ -84,6 +90,7 @@ def make_env():
   if FLAGS.local_weight > 1: env = LocalizeWrapper(env)
   if FLAGS.scale_rewards: env = ScaleWrapper(env)
   if FLAGS.history > 0: env = HistoryWrapper(3)(env)
+  if FLAGS.learn_switch: env = SwitchActionWrapper(env)
   return env
 
 transients = ['validate', 'render', 'restore', 'weights', 'save_settings']
@@ -93,7 +100,7 @@ def main(*_):
     with open('settings', 'w') as f:
       json.dump(FLAGS.__flags, f, indent=4, separators=(',', ': '))
   FLAGS.episode_len = int(FLAGS.episode_secs / FLAGS.light_secs)
-  FLAGS.cars_per_sec = FLAGS.local_cars_per_sec * 12 # THIS IS A PROBLEM!
+  FLAGS.cars_per_sec = FLAGS.local_cars_per_sec * 6 # THIS IS A PROBLEM!
   FLAGS.light_iterations = int(FLAGS.light_secs / FLAGS.rate)
   FLAGS.episode_ticks = int(FLAGS.episode_secs / FLAGS.rate)
   if FLAGS.weights: FLAGS.restore = True

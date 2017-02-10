@@ -24,7 +24,7 @@ def StrobeWrapper(repeat_count, num_samples):
                 if (current_step % self.sample_size) == self.sample_size - 1:
                   self.history[current_step // self.sample_size] = obs
                 if done: return self.history[:(current_step + 1) //
-                    self.sample_size], reward, done, info
+                    self.sample_size], total_reward, done, info
             return self.history, total_reward, done, info
 
         def _reset(self):

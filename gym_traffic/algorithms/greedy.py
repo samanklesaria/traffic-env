@@ -6,6 +6,7 @@ FLAGS = flags.FLAGS
 
 def run(env_f):
   FLAGS.obs_deltas = False
+  FLAGS.learn_switch = False
   env = env_f()
   iterations = 0
   reward_sum = 0
@@ -22,6 +23,6 @@ def run(env_f):
       reward_sum += np.mean(reward) * (multiplier if FLAGS.print_discounted else 1)
       multiplier *= FLAGS.gamma
       if done: break
-    # print("Iterations:", i)
-    # print("Cars generated:", env.unwrapped.generated_cars)
+    print("Iterations:", i)
+    print("Cars generated:", env.unwrapped.generated_cars)
     print("Avg reward", reward_sum / iterations)

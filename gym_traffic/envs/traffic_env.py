@@ -11,7 +11,7 @@ import math
 flags = tf.app.flags
 FLAGS = flags.FLAGS
 flags.DEFINE_float('local_cars_per_sec', 0.2, 'Cars entering the system per second')
-flags.DEFINE_float('rate', 0.2, 'Number of seconds between simulator ticks')
+flags.DEFINE_float('rate', 0.5, 'Number of seconds between simulator ticks')
 flags.DEFINE_boolean('poisson', True, 'Should we use a Poisson distribution?')
 flags.DEFINE_boolean('obs_deltas', True, 'Should we observe car entries, not cars?')
 flags.DEFINE_boolean('reward_time', False, 'Should we reward negative trip times')
