@@ -18,6 +18,7 @@ flags.DEFINE_boolean('reward_time', False, 'Should we reward negative trip times
 flags.DEFINE_boolean('decel_penalty', False, 'Should we penalize decelleration')
 flags.DEFINE_string('entry', 'all', 'Where should cars enter from?')
 flags.DEFINE_float('overflow_penalty', 0, 'Overflow penalty')
+flags.DEFINE_integer('yellow_ticks', 0, 'Ticks for an amber phase')
 
 # Get the rotation of a line segment
 def get_rot(line, length):
@@ -60,12 +61,13 @@ def sim(r, ld, me):
   return dvr
 
 # Update the leading car at the end of each road depending on light phases
-@jit(void(int32[:],int8[:],float32,int32[:],float32[:,:,:],int32[:],int32[:],int8[:]),
+@jit(void(int32[:],int8[:],float32,int32[:],float32[:,:,:],int32[:],int32[:],int8[:],int32[:]),
     nopython=True,nogil=True,cache=True)
-def update_lights(dests, phases, length, nexts, state, leading, lastcar, current_phase):
+def update_lights(dests,phases,length,nexts,state,leading,lastcar,current_phase,amber):
+  amber[:] = np.maximum(amber - 1, 0)
   for (e,dst) in enumerate(dests):
     if dst == -1: return
-    if phases[e] == current_phase[dst]:
+    if phases[e] == current_phase[dst] or amber[dst] > 0:
       state[e, xi, leading[e]] = length
     else:
       newrd = nexts[e]
@@ -135,10 +137,11 @@ def regular(random):
     else: yield None
 
 @jit(void(int32[:],int8[:],float32,int32[:],float32[:,:,:],int32[:],int32[:],
-  float32,int8[:],float32[:],float32[:],float32,float32,int8,int8),nopython=True,nogil=True,cache=True)
-def move_cars(dests,phases,length,nexts,state,leading,lastcar,rate,current_phase,counts,
+  float32,int8[:],int32[:],float32[:],float32[:],float32,float32,int8,int8),
+  nopython=True,nogil=True,cache=True)
+def move_cars(dests,phases,length,nexts,state,leading,lastcar,rate,current_phase,amber,counts,
     rewards,penalty,tick,dec_pen,time_rew):
-  update_lights(dests,phases,length,nexts,state,leading,lastcar,current_phase)
+  update_lights(dests,phases,length,nexts,state,leading,lastcar,current_phase,amber)
   for e in range(leading.shape[0]):
     if leading[e] == lastcar[e]: continue
     if leading[e] < lastcar[e]:
@@ -156,14 +159,17 @@ class TrafficEnv(gym.Env):
   metadata = {'render.modes': ['human']}
 
   def _step(self, action):
-    self.current_phase = np.array(action).astype(np.int8)
+    current_phase = np.array(action).astype(np.int8)
+    self.amber += (np.logical_xor(self.current_phase, current_phase) *
+        FLAGS.yellow_ticks).astype(np.int32)
+    self.current_phase = current_phase
     self.rewards[:] = 0
     self.counts[:] = 0
     if self.adding_steps is None or self.steps < self.adding_steps:
       self.add_new_cars(self.steps)
     move_cars(self.graph.dest, self.graph.phases, self.graph.len,
         self.graph.nexts, self.state, self.leading,
-        self.lastcar, FLAGS.rate, self.current_phase, self.counts, self.rewards,
+        self.lastcar, FLAGS.rate, self.current_phase, self.amber, self.counts, self.rewards,
         FLAGS.overflow_penalty, self.steps, FLAGS.decel_penalty, FLAGS.reward_time)
     self.steps += 1
     if FLAGS.obs_deltas:
@@ -184,6 +190,7 @@ class TrafficEnv(gym.Env):
     self.state[:,xi,1] = np.inf
     self.current_phase = np.round(
       np.random.randn(self.graph.intersections) + 0.5).astype(np.int8)
+    self.amber = np.zeros(self.graph.intersections, dtype=np.int32)
     if FLAGS.poisson: self.rand_car = poisson(np.random.RandomState())
     else: self.rand_car = regular(np.random.RandomState())
     self.leading = np.ones(self.graph.roads, dtype=np.int32)
@@ -254,9 +261,15 @@ class TrafficEnv(gym.Env):
   def update_colors(self):
     for i in range(self.graph.train_roads):
       if self.graph.phases[i] == self.current_phase[self.graph.dest[i]]:
-        self.roadlines[i].set_color(1,0,0)
+        if self.amber[self.graph.dest[i]] > 0:
+          self.roadlines[i].set_color(1,1,0)
+        else:
+          self.roadlines[i].set_color(1,0,0)
       else:
-        self.roadlines[i].set_color(0,1,0)
+        if self.amber[self.graph.dest[i]] > 0:
+          self.roadlines[i].set_color(1,0,0)
+        else:
+          self.roadlines[i].set_color(0,1,0)
 
   def update_locs(self):
     for i in range(self.graph.roads):

@@ -5,6 +5,7 @@ from gym_traffic.algorithms import *
 import threading
 import os.path
 from functools import partial
+from itertools import count
 
 EPS = 1e-6
 
@@ -98,8 +99,21 @@ def run(env_f):
       master.load_from_checkpoint(sess,
           tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'global'))
       if FLAGS.validate:
-        while True:
-          print(validate(master, master.env, sess))
+        reward_mean = 0
+        reward_var = 0
+        for iterations in count(1):
+          try:
+            total_reward = validate(master, master.env, sess)
+            print("Cars generated", master.env.unwrapped.generated_cars)
+            print("Total reward", total_reward)
+            reward_mean = (total_reward + (iterations - 1) * reward_mean) / iterations
+            if iterations >= 2:
+              reward_var = (iterations - 2) / (iterations - 1) * reward_var + \
+                np.square(total_reward - reward_mean) / iterations
+          except KeyboardInterrupt:
+            print("Avg reward:", reward_mean)
+            print("Reward stddev:", np.sqrt(reward_var))
+            raise
       else:
         threads = [threading.Thread(target=work, args=[w, sess, None]) for w in workers[1:]]
         for t in threads: t.start()
