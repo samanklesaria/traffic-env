@@ -8,10 +8,7 @@ def HistoryWrapper(history_count):
       super(HistoryWrapper, self).__init__(env)
       self.history_count = history_count
       self.history = deque()
-      oldshape = self.env.observation_space.low.shape
-      self.observation_space = gym.spaces.Box(
-          np.broadcast_to(self.env.observation_space.low, (history_count, *oldshape)),
-          np.broadcast_to(self.env.observation_space.high, (history_count, *oldshape)))
+      self.observation_space = env.observation_space.replicated(history_count)
 
     def _step(self, action):
       obs, reward, done, info = self.env.step(action)

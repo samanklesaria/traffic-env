@@ -1,4 +1,4 @@
-from numba import jit, void, float64, float32, int64, int32, int8
+from numba import jit, void, float64, float32, int64, int32
 import numpy as np
 
 # Return an array of road locations for a grid road network
@@ -24,7 +24,7 @@ def get_locs_gridroad(eps,m,n,v,roads):
 # A graph representing a 2D grid with no turns
 class GridRoad:
     def __init__(self, m, n, l):
-        self.len = l
+        self.len = np.float32(l)
         self.n = n
         self.m = m
         v = m*n
@@ -32,7 +32,7 @@ class GridRoad:
         self.roads = self.train_roads + 2*n + 2*m
         self.intersections = v
         self.locs = l * get_locs_gridroad(0.02,m,n,v,self.roads)
-        self.phases = (np.arange(self.roads) // v < 2).astype(np.int8)
+        self.phases = (np.arange(self.roads) // v < 2).astype(np.int32)
         self.dest = np.empty(self.roads, dtype=np.int32)
         self.nexts = np.array(list(map(self.get_next, range(self.roads))), dtype=np.int32)
         for i in range(self.roads):
@@ -62,12 +62,3 @@ class GridRoad:
         if i < 2*v: return i-1 if col > 0 else 4*v+2*n+m+row
         if i < 3*v: return i+n if row < m-1 else 4*v+n+m+col
         return i-n if row > 0 else 4*v+col
-
-# Convert a signal defined on roads to one defined on intersections
-@jit(float32[:](int32,int32[:],float32[:]), nopython=True,nogil=True,cache=True)
-def by_intersection(intersections,dests,road_cars):
-    result = np.zeros(intersections, dtype=np.float32)
-    for i in range(road_cars.shape[0]):
-        result[dests[i]] += road_cars[i]
-    return result
-

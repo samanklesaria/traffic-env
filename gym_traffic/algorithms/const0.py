@@ -6,19 +6,17 @@ flags = tf.app.flags
 FLAGS = flags.FLAGS
 
 def run(env_f):
-  FLAGS.learn_switch = False
   env = env_f()
+  zeros = np.zeros(env.action_space.shape)
   def rewards():
     while True:
+      reward_sum = 0
       multiplier = 1
-      total_reward = 0
       obs = env.reset()
       for _ in range(FLAGS.episode_len):
-        if FLAGS.render: print("OBS", obs)
-        obs, reward, done, _ = env.step(env.action_space.sample())
-        if FLAGS.render: print("REWARD", reward)
-        total_reward += np.mean(reward) * (multiplier if FLAGS.print_discounted else 1)
+        obs, reward, done, _ = env.step(zeros)
+        reward_sum += np.mean(reward) * (multiplier if FLAGS.print_discounted else 1)
         multiplier *= FLAGS.gamma
         if done: break
-      yield total_reward
+      yield reward_sum
   print_running_stats(rewards())
