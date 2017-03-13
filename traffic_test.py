@@ -40,7 +40,7 @@ class PassingWrapper(gym.ObservationWrapper):
     self.observation_space = GSpace(self.observation_space.limit[self.idx].astype(np.float32))
   def _observation(self, o):
     result = o[self.idx].astype(np.float32)
-    result[:-1] /= 20
+    print("Passed", o[:4])
     multiplier = (2 * o[8]) - 1
     result[-1] /= 100 * multiplier
     return result
@@ -59,7 +59,7 @@ class SquishReward(gym.RewardWrapper):
 
 def make_env():
   env = gym.make('traffic-v0')
-  env.set_graph(GridRoad(1,1,9))
+  env.set_graph(GridRoad(1,1,7))
   env.seed_generator()
   env.reset_entrypoints()
   if FLAGS.render: env.rendering = True
@@ -67,7 +67,7 @@ def make_env():
   if FLAGS.trainer == "greedy":
     env = LastWrapper(FLAGS.light_iterations)(env)
   else:
-    env = StrobeWrapper(FLAGS.light_iterations, 4, [0,1,2,3])(env)
+    env = StrobeWrapper(FLAGS.light_iterations, 1, [0,1,2,3])(env)
   if FLAGS.warmup_lights > 0: env = WarmupWrapper(FLAGS.warmup_lights)(env)
   # if FLAGS.local_weight > 1: env = LocalizeWrapper(env)
   if FLAGS.squish_rewards: env = SquishReward(env)

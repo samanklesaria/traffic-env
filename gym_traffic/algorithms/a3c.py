@@ -16,26 +16,25 @@ def update_target_graph(from_scope, to_scope):
     tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, to_scope))]
 
 # Makes an image from 5-channel observations
-# Next, it would be nice to scale backwards. Maybe with
-# white separators
+# We should do this manually.
 def obs_image(obs, obs_shape):
   history, snapshots, channels, width, height, = obs_shape
   channel_first = tf.transpose(obs, perm=[3,0,1,2,4,5])
   waiting = tf.gather(channel_first, [4,4,4,4])
   waiting_mag = tf.abs(waiting)
-  normalized_mag = tf.cast(waiting_mag * (255 /
-    (0.06 * FLAGS.light_secs / FLAGS.rate)), tf.uint8)
-  reds = tf.cast(waiting > 0, tf.uint8) * normalized_mag
-  greens = tf.cast(waiting < 0, tf.uint8) * normalized_mag
+  normalized_mag = waiting_mag * (255 /
+    (0.01 * FLAGS.light_secs / FLAGS.rate))
+  reds = tf.cast(waiting > 0, tf.float32) * normalized_mag
+  greens = tf.cast(waiting < 0, tf.float32) * normalized_mag
   passed = channel_first[:4]
-  blues = tf.cast(passed * 255, tf.uint8)
+  blues = 255 - passed * 255 
   colored = tf.stack([reds, greens, blues])
   reshaped = tf.reshape(colored, [3, 2, 2, -1, history, snapshots, width, height])
   transposed = tf.transpose(reshaped, perm=[3,5,7,2,4,6,1,0])
   squished = tf.reshape(transposed, (-1, snapshots, height *2, history, width*2, 3))
   padded = tf.pad(squished, [[0,0],[1,0],[1,0],[1,0],[1,0],[0,0]])
   pic = tf.reshape(padded, (-1, (snapshots+1) * (1+(height*2)), (history+1) * ((2*width)+1), 3))
-  return tf.cast(255, tf.uint8) - pic[:,height*2+1:,width*2+1:]
+  return tf.cast(255 - pic[:,height*2+1:,width*2+1:], tf.uint8), blues
 
 # Problem with showing this in the visualization is I have to worry about scaling. Still, doable. 
 # If we're doing that, we probably don't want this representation. We want to put it into
@@ -67,9 +66,10 @@ class A3CNet:
     self.probs = tf.nn.sigmoid(self.score)
     tf.summary.histogram("probs", self.probs)
     self.value = tl.fully_connected(hidden, num_outputs=self.env.reward_size, activation_fn=None)
-    self.obs_image = tf.summary.image("obs_image",
-        obs_image(self.observations, self.env.observation_space.shape),
+    obs_sum, self.blues = obs_image(self.observations, self.env.observation_space.shape)
+    self.obs_image = tf.summary.image("obs_image", obs_sum, 
         max_outputs=20, collections=[])
+
     # self.prob_grads = tf.map_fn(lambda p: tf.gradients(p, [self.observations])[0][0],
     #     tf.reshape(self.probs[0], [-1]))
 
@@ -115,7 +115,8 @@ def validate(net, env, sess, writer):
   multiplier = 1.0
   for i in range(FLAGS.episode_len):
     if FLAGS.obs_pic:
-      s = sess.run(net.obs_image, feed_dict={net.observations: [obs]})
+      s,b = sess.run([net.obs_image, net.blues], feed_dict={net.observations: [obs]})
+      # print("Blues", b)
       writer.add_summary(s, i)
       if FLAGS.render: writer.flush()
     dist, = sess.run(net.probs, feed_dict={net.observations: [obs]})

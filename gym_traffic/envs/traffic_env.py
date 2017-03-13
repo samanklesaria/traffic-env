@@ -203,6 +203,7 @@ class TrafficEnv(gym.Env):
     self.state[:,xi,1] = np.inf
     self.elapsed[:] = 0
     self.queued[:] = 0
+    self.newcars[:] = 0
     self.leading[:] = 1
     self.lastcar[:] = 1
     self.current_phase[:] = np.round(
