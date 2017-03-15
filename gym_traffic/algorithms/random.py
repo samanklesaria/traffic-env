@@ -16,7 +16,7 @@ def run(env_f):
       for _ in range(FLAGS.episode_len):
         if FLAGS.render: print("OBS", obs)
         obs, reward, done, _ = env.step(env.action_space.sample())
-        if FLAGS.render: print("REWARD", reward)
+        # if FLAGS.render: print("REWARD", reward)
         total_reward += np.mean(reward) * (multiplier if FLAGS.print_discounted else 1)
         multiplier *= FLAGS.gamma
         if done: break

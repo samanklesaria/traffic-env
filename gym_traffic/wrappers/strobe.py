@@ -2,7 +2,7 @@ import gym
 import numpy as np
 
 # This should also allow you to sum over a particular axis
-def StrobeWrapper(repeat_count, num_samples, sum_axes=[]):
+def StrobeWrapper(repeat_count, num_samples, sum_indices=[]):
     class StrobeWrapper(gym.Wrapper):
         def __init__(self, env):
             super(StrobeWrapper, self).__init__(env)
@@ -12,7 +12,7 @@ def StrobeWrapper(repeat_count, num_samples, sum_axes=[]):
             self.observation_space = env.observation_space.replicated(num_samples)
             self.history = self.observation_space.empty()
             self.mask = np.zeros_like(env.observation_space.limit)
-            self.mask[sum_axes] = 1
+            self.mask[sum_indices] = 1
 
         def _step(self, action):
             done = False
@@ -21,10 +21,11 @@ def StrobeWrapper(repeat_count, num_samples, sum_axes=[]):
             for current_step in range(self.repeat_count):
                 obs, reward, done, info = self.env.step(action)
                 total_reward += reward
-                if (current_step % self.sample_size) == self.sample_size - 1:
+                if (current_step % self.sample_size) == 0:
                   self.history[current_step // self.sample_size] = obs
                 else:
-                  self.history[current_step // self.sample_size] += (obs * self.mask)
+                  self.history[current_step // self.sample_size] *= self.mask
+                  self.history[current_step // self.sample_size] += obs
                 if done: return self.history[:(current_step + 1) //
                   self.sample_size], total_reward, done, info
             return self.history, total_reward, done, info

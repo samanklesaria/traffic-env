@@ -16,6 +16,7 @@ class GSpace(gym.Space):
 
   def sample(self):
     # Admittedly this isn't a uniform sample unless limits are uniform
+    # LET's do a proper uniform sample.
     return np.random.randint(np.min(self.limit), size=self.limit.shape, dtype=self.limit.dtype)
 
   def empty(self): return np.empty_like(self.limit)
