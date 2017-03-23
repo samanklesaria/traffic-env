@@ -2,13 +2,12 @@ import numpy as np
 import random
 import tensorflow as tf
 import tensorflow.contrib.layers as tl
-from tensorflow.contrib.tensorboard.plugins import projector
+import tensorflow.contrib.rnn as rnn
 from gym_traffic.algorithms.util import *
 import threading
 import os.path
 from functools import partial
 from util import print_running_stats
-from conv_gru_cell import ConvGRUCell
 
 EPS = 1e-8
 
@@ -18,32 +17,6 @@ def update_target_graph(from_scope, to_scope):
     tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, from_scope),
     tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, to_scope))]
 
-# time x batch x h x w x feature -> pic x h x w x 1
-def to_pic(obs, outs, ins, obs_shape):
-  height, width, channels = obs_shape
-  hidden = tf.reshape(tf.concat([tf.expand_dims(ins, 0), outs[:-1]], axis=0),
-      [-1, height, width, 11])
-  flat_obs = tf.reshape(obs, [-1, height, width, channels])
-  queued = tf.reshape(flat_obs[:,:,:,:4], [-1,height,width,2,2])
-  phase = flat_obs[:,:,:,4:]
-  hidden_phased = tf.concat([hidden[:,:,:,:7], phase], axis=3)
-  bottom = tf.reshape(hidden_phased, [-1,height,width,2,4])
-  side = tf.reshape(hidden[:,:,:,7:], [-1,height,width,2,2])
-  top = tf.concat([queued, side], axis=4)
-  img = tf.concat([top,bottom], axis=3)
-  return tf.reshape(tf.transpose(img, perm=[0,1,3,2,4]), [-1,height*4,width*4, 1])
-
-# wraps batch x h x w x 1 -> h' x w' x 1, for square h', w'
-def wrap_imgs(imgs):
-  shape = tf.shape(imgs)
-  n = shape[0]
-  size = tf.to_int32(tf.ceil(tf.sqrt(tf.to_float(n))))
-  padded = tf.pad(imgs,[[0,tf.square(size) - n],[0,0],[0,0],[0,0]])
-  reshaped = tf.reshape(padded, [size, size, shape[1], shape[2], 1])
-  wrapped = tf.reshape(tf.transpose(reshaped, perm=[0,2,1,3,4]), [size*shape[1], size*shape[2], 1])
-  centered = wrapped - tf.reduce_mean(wrapped)
-  return tf.cast(centered / (tf.reduce_max(centered) / 255), tf.uint8)
-
 # Contains the network and environment for a single thread
 class A3CNet:
   def __init__(self, env_f):
@@ -52,30 +25,17 @@ class A3CNet:
     obs_shape = self.env.observation_space.shape
     self.episode_num = tf.Variable(0,dtype=tf.int32,name='episode_num',trainable=False)
     self.increment_episode = tf.stop_gradient(self.episode_num.assign_add(1))
-    self.observations = tf.placeholder(tf.float32, [None,None,*obs_shape], name="input_x")
-    gru = ConvGRUCell(11, [1,1])
-    self.state_in = gru.zero_state(tf.shape(self.observations)[1], tf.float32)
+    self.observations = tf.placeholder(tf.float32, [None,*obs_shape], name="input_x")
+    gru = rnn.GRUCell(60)
+    self.state_in = gru.zero_state(1, tf.float32)
     self.rnn_out, self.state_out = tf.nn.dynamic_rnn(gru,
-        self.observations, time_major=True,
+        tf.expand_dims(self.observations,0),
         initial_state=self.state_in, dtype=np.float32)
-    self.hidden = tf.reshape(self.rnn_out, [-1, 11 * np.prod(obs_shape[:-1])])
+    self.hidden = tf.squeeze(self.rnn_out, 0)
     self.score = tl.fully_connected(self.hidden, self.env.action_space.size, activation_fn=None)
     self.probs = tf.nn.sigmoid(self.score)
     tf.summary.histogram("probs", self.probs)
     self.value = tl.fully_connected(self.hidden, num_outputs=self.env.reward_size, activation_fn=None)
-
-  def make_image_summaries(self):
-    obs_shape = self.env.observation_space.shape
-    obs_image = to_pic(self.observations, self.rnn_out, self.state_in, obs_shape)
-    self.obs_image_summary = tf.summary.image("obs_image", obs_image, 
-        max_outputs=20, collections=[])
-    self.prob_grads = [tf.gradients(self.probs[0][i],
-      [self.observations, self.rnn_out, self.state_in]) for i in range(self.env.action_space.size)]
-    grad_images = [to_pic(*g, obs_shape) for g in self.prob_grads]
-    self.grad_images_summary = tf.summary.merge([tf.summary.image("grad_image", i) for
-        i in grad_images])
-    if FLAGS.mode == "embed":
-      self.obs_png = tf.image.encode_png(wrap_imgs(obs_image))
 
   def make_train_ops(self):
     self.update_local = update_target_graph('global', self.name)
@@ -113,7 +73,7 @@ def epoch(net, sess, extra_ops=[]):
   obs = net.env.reset()
   ops = [net.probs, net.state_out, *extra_ops]
   for mt in range(FLAGS.episode_len):
-    fd = {net.observations: [[obs]]}
+    fd = {net.observations: [obs]}
     if rnn is not None: fd[net.state_in] = rnn
     dist,rnn,*others = sess.run(ops, feed_dict=fd)
     flaty = proportional(dist[0], None)
@@ -126,41 +86,14 @@ def epoch(net, sess, extra_ops=[]):
 def validate(net, sess, writer):
   reward_sum = 0
   multiplier = 1.0
-  for (i,obs,rnn,d,_,r,_,_,others) in epoch(net, sess,
-      [net.obs_image_summary, net.grad_images_summary] if FLAGS.obs_pic else []):
+  for (i,obs,rnn,d,_,r,_,_,others) in epoch(net, sess):
     if FLAGS.render:
       print("Obs", obs)
       print("Hidden", rnn)
       print("Action", d)
-      if FLAGS.obs_pic:
-        writer.add_summary(others[0], i)
-        writer.add_summary(others[1], i)
-        writer.flush()
     reward_sum += np.mean(r) * (multiplier if FLAGS.print_discounted else 1)
     multiplier *= FLAGS.gamma
   return reward_sum
-
-# Run simulations until we get enough points to embed.
-def write_embedding(sess, master, embedding):
-  embedding_saver = tf.train.Saver([master.embedding])
-  total_len = 0
-  samples = []
-  while total_len < FLAGS.vis_size:
-    epoch_samples = []
-    while len(epoch_samples) < FLAGS.episode_len:
-      print("Trying to get a full episode_len of observations")
-      # NOTE- we can use sequence_length instead. Should do this
-      # eventually
-      epoch_samples = [x[1] for x in epoch(master, sess)]
-    total_len += FLAGS.episode_len
-    samples.append(epoch_samples)
-  samples_arr = np.array(samples)
-  time_major = np.transpose(samples_arr, axes=[1,0,2,3,4])
-  print("SAMPLES HAS DIMS", time_major.shape)
-  png,_ = sess.run([master.obs_png, master.set_embedding],
-    feed_dict={master.observations: time_major})
-  with open(embedding.sprite.image_path, 'wb') as f: f.write(png)
-  embedding_saver.save(sess, os.path.join("embedding", "embedding.ckpt"))
 
 # Run A3C training method
 def train_model(net, sess, writer, weight_saver, workers):
@@ -198,23 +131,11 @@ def run(env_f):
       master = A3CNet(env_f)
       master.avg_r = tf.placeholder(tf.float32, name="avg_r")
       master.avg_summary = tf.summary.scalar("avg_r_summary", master.avg_r)
-      if FLAGS.mode == "embed" or FLAGS.obs_pic:
-        master.make_image_summaries()
     if FLAGS.mode == "train":
       opt = tf.train.AdamOptimizer(learning_rate=FLAGS.learning_rate)
       workers = [make_worker('w'+str(t), env_f) for t in range(FLAGS.threads)]
       with tf.variable_scope('application'):
         for w in workers: w.make_apply_ops(opt)
-    if FLAGS.mode == "embed":
-      summary_writer = tf.summary.FileWriter("embedding", tf.get_default_graph())
-      master.embedding = tf.Variable(tf.zeros([FLAGS.vis_size,11]),trainable=False,name="embedding")
-      master.set_embedding = master.embedding.assign(master.hidden[:FLAGS.vis_size])
-      config = projector.ProjectorConfig()
-      embedding = config.embeddings.add()
-      embedding.tensor_name = master.embedding.name
-      embedding.sprite.image_path = os.path.join("embedding", 'sprite.png')
-      embedding.sprite.single_image_dim.extend([4,4])
-      projector.visualize_embeddings(summary_writer, config)
     with tf.Session() as sess:
       sess.run(tf.global_variables_initializer())
       weight_saver = tf.train.Saver(tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'global'),
@@ -223,8 +144,7 @@ def run(env_f):
         latest = tf.train.latest_checkpoint(FLAGS.logdir)
         print("Restoring from", latest)
         weight_saver.restore(sess, latest)
-      if FLAGS.mode == "embed": write_embedding(sess, master, embedding)
-      elif FLAGS.mode == "validate":
+      if FLAGS.mode == "validate":
         summary_writer = tf.summary.FileWriter("val_dir", tf.get_default_graph())
         def rewards():
           while True:
@@ -250,7 +170,7 @@ def train(sess, net, summary, xs, ys, vals, drs):
   advantages = drs[:-1] + FLAGS.gamma * vals[1:] - vals[:-1]
   drs = discount(drs, FLAGS.lam * FLAGS.gamma)
   advantages = discount(advantages, FLAGS.gamma)
-  fd = {net.observations: np.expand_dims(xs, 1), net.input_y: ys,
+  fd = {net.observations: xs, net.input_y: ys,
     net.advantages: advantages, net.target_v: drs[:-1]}
   return sess.run([net.apply_grads,summary], feed_dict=fd)[1]
 
@@ -263,25 +183,25 @@ def work(net, sess, coord, ev):
   drs = np.empty((FLAGS.batch_size + 1, net.env.reward_size), dtype=np.float32)
   episode_rewards = np.zeros(FLAGS.summary_rate, dtype=np.float32)
   print("Started worker", net.name)
-  with coord.stop_on_exception():
-    while not coord.should_stop():
-      episode_num = sess.run(net.episode_num)
-      sess.run(net.increment_episode)
-      sess.run(net.update_local)
-      for (mt,obs,_,_,y,reward,new_obs,done,v) in epoch(net, sess, [net.value]):
-        t = mt % FLAGS.batch_size
-        ys[t] = y
-        xs[t] = obs
-        vals[t] = v[0][0]
-        drs[t] = reward / 100.0
-        if t == FLAGS.batch_size - 1 and not done:
-          vals[-1] = sess.run(net.value, feed_dict={net.observations: [[new_obs]]})[0]
-          s = train(sess, net, net.summary, xs, ys, vals, drs)
-          sess.run(net.update_local)
-        if done: break
-      if t != FLAGS.batch_size - 1 or done:
-        vals[t+1] = 0 if done else sess.run(net.value, feed_dict={
-            net.observations: [[obs]]})[0,0]
-        s = train(sess, net, net.summary, xs[:t+1], ys[:t+1], vals[:t+2], drs[:t+2])
-      writer.add_summary(s, episode_num)
-      ev.set()
+  # with coord.stop_on_exception():
+  while not coord.should_stop():
+    episode_num = sess.run(net.episode_num)
+    sess.run(net.increment_episode)
+    sess.run(net.update_local)
+    for (mt,obs,_,_,y,reward,new_obs,done,v) in epoch(net, sess, [net.value]):
+      t = mt % FLAGS.batch_size
+      ys[t] = y
+      xs[t] = obs
+      vals[t] = v[0][0]
+      drs[t] = reward / 100.0
+      if t == FLAGS.batch_size - 1 and not done:
+        vals[-1] = sess.run(net.value, feed_dict={net.observations: [new_obs]})[0]
+        s = train(sess, net, net.summary, xs, ys, vals, drs)
+        sess.run(net.update_local)
+      if done: break
+    if t != FLAGS.batch_size - 1 or done:
+      vals[t+1] = 0 if done else sess.run(net.value, feed_dict={
+          net.observations: [obs]})[0,0]
+      s = train(sess, net, net.summary, xs[:t+1], ys[:t+1], vals[:t+2], drs[:t+2])
+    writer.add_summary(s, episode_num)
+    ev.set()

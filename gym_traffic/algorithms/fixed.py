@@ -19,7 +19,7 @@ def run(env_f):
       reward_sum = 0
       obs = env.reset()
       for i in range(FLAGS.episode_len):
-        if FLAGS.render: print("OBS", obs[-1, -1])
+        if FLAGS.render: print("OBS", obs)
         if FLAGS.render: print("Action", actions[phase(i)])
         obs, reward, done, _ = env.step(actions[phase(i)])
         reward_sum += np.mean(reward) * (multiplier if FLAGS.print_discounted else 1)

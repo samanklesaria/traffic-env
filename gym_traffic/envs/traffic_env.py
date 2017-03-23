@@ -78,9 +78,9 @@ def update_lights(dests,phases,length,nexts,state,leading,lastcar,current_phase,
         state[e, xi, leading[e]] = np.inf
 
 # Add a new car to a road
-@jit(boolean(int32,float32[:],float32[:,:,:],int32[:],int32[:],float32,int32[:],
+@jit(boolean(int32,float32[:],float32[:,:,:],int32[:],int32[:],float32,
   float32[:],int32[:]),nopython=True,nogil=True,cache=True)
-def add_car(road,car,state,leading,lastcar,tick,queued,rewards,dests):
+def add_car(road,car,state,leading,lastcar,tick,rewards,dests):
   pos = wrap(lastcar[road] + 1)
   start_pos = np.inf
   if lastcar[road] != leading[road]:
@@ -91,27 +91,28 @@ def add_car(road,car,state,leading,lastcar,tick,queued,rewards,dests):
     state[road,wi,pos] = tick
     state[road,xi,pos] = min(state[road,xi,pos], start_pos)
     lastcar[road] = pos
-    if dests[road] >= 0: queued[road] += 1
   elif dests[road] >= 0:
     rewards[dests[road]] -= OVERFLOW_PENALTY
+    return True
+  else:
     return True
   return False
 
 # Remove cars with x coordinates beyond their roads' lengths
 @jit(boolean(int32[:],float32,int32[:],float32[:,:,:],int32[:],int32[:],int32[:],float32[:],
   float32),nopython=True,nogil=True,cache=True)
-def advance_finished_cars(dests,length,nexts,state,leading,lastcar,queued,rewards,tick):
+def advance_finished_cars(dests,length,nexts,state,leading,lastcar,passed,rewards,tick):
   overflowed = False
   for e in range(nexts.shape[0]):
     while leading[e] != lastcar[e] and state[e,xi,wrap(leading[e]+1)] > length:
       newlead = wrap(leading[e]+1)
       newrd = nexts[e]
+      passed[e] += 1
       if newrd >= 0:
-        queued[e] -= 1
         rewards[dests[e]] += 1
         state[e,xi,newlead] -= length
         overflowed = add_car(newrd,state[e,:,newlead],state,
-            leading,lastcar,tick,queued,rewards,dests) or overflowed
+            leading,lastcar,tick,rewards,dests) or overflowed
       state[e,:,newlead] = state[e,:,leading[e]]
       leading[e] = newlead
   return overflowed
@@ -148,7 +149,7 @@ def inv_popcount(inv_i):
   float32,int32[:],int32[:],int32[:],float32[:],float32),
   nopython=True,nogil=True,cache=True)
 def move_cars(dests,phases,length,nexts,state,leading,lastcar,rate,current_phase,elapsed,
-    queued,rewards,tick):
+    passed,rewards,tick):
   update_lights(dests,phases,length,nexts,state,leading,lastcar,current_phase,elapsed)
   for e in range(leading.shape[0]):
     if leading[e] == lastcar[e]: continue
@@ -162,7 +163,7 @@ def move_cars(dests,phases,length,nexts,state,leading,lastcar,rate,current_phase
       dv2 = sim(rate, state[e,:,:lastcar[e]], state[e,:,1:lastcar[e]+1])
       if DECEL_PENALTY and dests[e] >= 0:
         rewards[dests[e]] += (np.sum(dv < 0) + np.sum(dv2 < 0)) / 10
-  return advance_finished_cars(dests,length,nexts,state,leading,lastcar,queued,rewards,tick)
+  return advance_finished_cars(dests,length,nexts,state,leading,lastcar,passed,rewards,tick)
 
 # Gym environment for the intelligent driver model
 class TrafficEnv(gym.Env):
@@ -178,10 +179,11 @@ class TrafficEnv(gym.Env):
     self.elapsed += 1 
     self.elapsed *= np.logical_not(change).astype(np.int32)
     self.rewards[:] = 0
+    self.passed[:] = 0
     overflowed = self.add_new_cars(self.steps)
     overflowed = move_cars(self.graph.dest, self.graph.phases, self.graph.len,
         self.graph.nexts, self.state, self.leading, self.lastcar, FLAGS.rate,
-        self.current_phase, self.elapsed, self.queued, self.rewards,
+        self.current_phase, self.elapsed, self.passed, self.rewards,
         self.steps) or overflowed
     self.steps += 1
     if WAITING_PENALTY:
@@ -200,11 +202,11 @@ class TrafficEnv(gym.Env):
     self.state[:,:,1] = 0 
     self.state[:,xi,1] = np.inf
     self.elapsed[:] = 0
-    self.queued[:] = 0
+    self.passed[:] = 0
     self.leading[:] = 1
     self.lastcar[:] = 1
     self.current_phase[:] = self.action_space.sample()
-    self.queued[:] = 0
+    self.passed[:] = 0
     return self.obs
 
   def add_new_cars(self, tick):
@@ -213,7 +215,7 @@ class TrafficEnv(gym.Env):
     while car is not None:
       self.generated_cars += 1
       overflowed = add_car(self.rand.choice(self.graph.entrypoints),car,self.state,
-        self.leading,self.lastcar,np.float32(tick),self.queued,
+        self.leading,self.lastcar,np.float32(tick),
         self.rewards,self.graph.dest) or overflowed
       car = next(self.rand_car)
     return overflowed
@@ -297,18 +299,19 @@ class TrafficEnv(gym.Env):
   def set_graph(self, graph):
     self.viewer = None
     self.graph = graph
-    self.state = np.empty((self.graph.roads, params, CAPACITY), dtype=np.float32)
-    self.leading = np.empty(self.graph.roads, dtype=np.int32)
-    self.lastcar = np.empty(self.graph.roads, dtype=np.int32)
+    self.state = np.empty((graph.roads, params, CAPACITY), dtype=np.float32)
+    self.leading = np.empty(graph.roads, dtype=np.int32)
+    self.lastcar = np.empty(graph.roads, dtype=np.int32)
     self.action_space = GSpace(np.ones(graph.intersections, dtype=np.int32) + 1)
-    obs_limit = np.full((graph.m, graph.n,6), CAPACITY-2, dtype=np.int32)
-    obs_limit[:,:,4] = 2
-    obs_limit[:,:,5] = 150
+    obs_limit = np.empty(graph.roads + 2 * graph.intersections, dtype=np.int32)
+    obs_limit[:graph.roads] = CAPACITY - 2
+    obs_limit[graph.roads:graph.roads + graph.intersections] = 2
+    obs_limit[-graph.intersections:] = 150
     self.observation_space = GSpace(obs_limit)
     self.obs = np.zeros_like(obs_limit)
-    self.queued = self.obs[:,:,:4].reshape(-1)
-    self.current_phase = self.obs[:,:,4].reshape(-1)
-    self.elapsed = self.obs[:,:,5].reshape(-1)
+    self.passed = self.obs[:graph.roads]
+    self.current_phase = self.obs[graph.roads:graph.roads + graph.intersections]
+    self.elapsed = self.obs[-graph.intersections:]
     self.rewards = np.empty(graph.intersections, dtype=np.float32)
     self.reward_size = self.rewards.size
     self.reset_entrypoints()
