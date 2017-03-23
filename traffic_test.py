@@ -10,6 +10,7 @@ import gym_traffic.algorithms.a3c as a3c
 import gym_traffic.algorithms.random as random
 import gym_traffic.algorithms.const0 as const0
 import gym_traffic.algorithms.const1 as const1
+import gym_traffic.algorithms.greedy as greedy
 import gym_traffic.algorithms.util
 import gym_traffic.algorithms.fixed as fixed
 

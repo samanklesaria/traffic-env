@@ -165,6 +165,12 @@ def move_cars(dests,phases,length,nexts,state,leading,lastcar,rate,current_phase
         rewards[dests[e]] += (np.sum(dv < 0) + np.sum(dv2 < 0)) / 10
   return advance_finished_cars(dests,length,nexts,state,leading,lastcar,passed,rewards,tick)
 
+@jit(int32[:,](int32[:],int32[:]),nopython=True,nogil=True,cache=True)
+def cars_on_roads(leading, lastcar):
+  inverted = (leading > lastcar).astype(np.int32)
+  unwrapped_lastcar = inverted * np.int32(CAPACITY - 1) + lastcar
+  return unwrapped_lastcar - leading
+
 # Gym environment for the intelligent driver model
 class TrafficEnv(gym.Env):
   metadata = {'render.modes': ['human']}
@@ -195,6 +201,10 @@ class TrafficEnv(gym.Env):
     self.rand = np.random.RandomState(seed)
     if FLAGS.poisson: self.rand_car = poisson(self.rand)
     else: self.rand_car = regular(self.rand)
+
+  def cars_on_roads(self):
+    return np.reshape(cars_on_roads(self.leading, self.lastcar)[:self.graph.train_roads],
+      [self.graph.m, self.graph.n, 4])
 
   def _reset(self):
     self.steps = np.float32(0)
