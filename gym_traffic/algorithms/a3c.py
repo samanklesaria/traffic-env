@@ -25,13 +25,14 @@ class A3CNet:
     obs_shape = self.env.observation_space.shape
     self.episode_num = tf.Variable(0,dtype=tf.int32,name='episode_num',trainable=False)
     self.increment_episode = tf.stop_gradient(self.episode_num.assign_add(1))
-    self.observations = tf.placeholder(tf.float32, [None,*obs_shape], name="input_x")
+    self.observations = tf.placeholder(tf.float32, [None,*obs_shape], name="observations")
     gru = rnn.GRUCell(60)
     self.state_in = gru.zero_state(1, tf.float32)
     self.rnn_out, self.state_out = tf.nn.dynamic_rnn(gru,
         tf.expand_dims(self.observations,0),
         initial_state=self.state_in, dtype=np.float32)
-    self.hidden = tf.squeeze(self.rnn_out, 0)
+    mid = tf.squeeze(self.rnn_out, 0)
+    self.hidden = tl.fully_connected(mid, 60)
     self.score = tl.fully_connected(self.hidden, self.env.action_space.size, activation_fn=None)
     self.probs = tf.nn.sigmoid(self.score)
     tf.summary.histogram("probs", self.probs)
@@ -54,8 +55,13 @@ class A3CNet:
     self.local_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, tf.get_variable_scope().name)
     gradients = tf.gradients(loss,self.local_vars)
     self.grads,_ = tf.clip_by_global_norm(gradients,40.0)
-    self.summary = tf.summary.merge(
-            tf.get_collection(tf.GraphKeys.SUMMARIES, self.name))
+    tl.summarize_activations()
+    prob_grads = [tf.gradients(self.probs[0][i],
+      [self.observations, self.state_in]) for i in range(self.env.action_space.size)]
+    for (i,g) in enumerate(prob_grads):
+      tf.summary.histogram("obs_grad"+str(i), g[0])
+      tf.summary.histogram("state_grad"+str(i), g[1])
+    self.summary = tf.summary.merge(tf.get_collection(tf.GraphKeys.SUMMARIES, self.name))
 
   def make_apply_ops(self, opt):
     self.global_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'global')
