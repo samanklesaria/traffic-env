@@ -31,8 +31,9 @@ class A3CNet:
     self.rnn_out, self.state_out = tf.nn.dynamic_rnn(gru,
         tf.expand_dims(self.observations,0),
         initial_state=self.state_in, dtype=np.float32)
-    mid = tf.squeeze(self.rnn_out, 0)
-    self.hidden = tl.fully_connected(mid, 60)
+    mid = tf.squeeze(self.rnn_out, 0, name="mid")
+    tf.add_to_collection(tf.GraphKeys.ACTIVATIONS, mid)
+    self.hidden = tl.fully_connected(mid, 60, outputs_collections=tf.GraphKeys.ACTIVATIONS)
     self.score = tl.fully_connected(self.hidden, self.env.action_space.size, activation_fn=None)
     self.probs = tf.nn.sigmoid(self.score)
     tf.summary.histogram("probs", self.probs)
@@ -55,7 +56,6 @@ class A3CNet:
     self.local_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, tf.get_variable_scope().name)
     gradients = tf.gradients(loss,self.local_vars)
     self.grads,_ = tf.clip_by_global_norm(gradients,40.0)
-    tl.summarize_activations()
     prob_grads = [tf.gradients(self.probs[0][i],
       [self.observations, self.state_in]) for i in range(self.env.action_space.size)]
     for (i,g) in enumerate(prob_grads):
@@ -150,6 +150,11 @@ def run(env_f):
         latest = tf.train.latest_checkpoint(FLAGS.logdir)
         print("Restoring from", latest)
         weight_saver.restore(sess, latest)
+        # WHAT ABOUT RESTORING THE WHOLE THING?
+        # tf.train.import_meta_graph('my-save-dir/my-model-10000.meta')
+        # we have to use stuff like tf.get_collection. Can't rely on object properties
+        # filename = ".".join([tf.latest_checkpoint(train_dir), "meta"])
+        # hyperparams should be saved as tf.get_collection("hparams")
       if FLAGS.mode == "validate":
         summary_writer = tf.summary.FileWriter("val_dir", tf.get_default_graph())
         def rewards():

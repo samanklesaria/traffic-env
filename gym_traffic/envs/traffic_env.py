@@ -17,9 +17,10 @@ flags.DEFINE_string('entry', 'all', 'Where should cars enter from?')
 flags.DEFINE_boolean('learn_switch', False, "Learn switches, not phases")
 
 # Python attribute access is expensive. We hardcode these params
+PASSING_REWARD = 0 # 1
 YELLOW_TICKS = 6
 DECEL_PENALTY = False
-OVERFLOW_PENALTY = 2
+OVERFLOW_PENALTY = 0 # 2
 WAITING_PENALTY = 0
 CAPACITY = 20
 EPS = 1e-8
@@ -60,6 +61,32 @@ def sim(r, ld, me):
   me[xi] += (dx > 0)*dx
   me[vi] = np.maximum(0, v + dvr)
   return dvr
+
+# we could optimize this by keeping track of passing by
+# destination and waiting by car.
+# make these accessible to a reward wrapper
+THRESHOLD = 0.01
+# @jit(void(int32[:],int32[:],int32[:],float32[:,:,:],float32[:],
+#   int32[:],int32[:],int32[:]), nopython=True,nogil=True,cache=True)
+def remi(dests,phases,current_phase,state,rewards,leading,lastcar,passed):
+  # if cars are stopped on red roads while no passing occurs, -= 1
+  # if passing occurs and no cars are stopped on green roads += 1
+  passing_occurs = np.zeros_like(rewards, dtype=np.bool8)
+  for (e,dst) in enumerate(dests):
+    if dst == -1: break
+    passing_occurs[dst] = passed[e] > 0
+  for (e,dst) in enumerate(dests):
+    if dst == -1: break
+    if leading[e] > lastcar[e]:
+      waiting = (state[e,vi,leading[e]+1:] < THRESHOLD).any() or \
+        (state[e,vi,1:lastcar[e]+1] < THRESHOLD).any()
+    else:
+      waiting = (state[e,vi,leading[e]+1:lastcar[e]+1] < THRESHOLD).any()
+    green = phases[e] != current_phase[dst]
+    if waiting and not green and not passing_occurs[dst]:
+      rewards[dst] -= 1
+    elif passing_occurs[dst] and green and not waiting:
+      rewards[dst] += 1
 
 # Update the leading car at the end of each road depending on light phases
 @jit(void(int32[:],int32[:],float32,int32[:],float32[:,:,:],int32[:],int32[:],int32[:],int32[:]),
@@ -109,7 +136,7 @@ def advance_finished_cars(dests,length,nexts,state,leading,lastcar,passed,reward
       newrd = nexts[e]
       passed[e] += 1
       if newrd >= 0:
-        rewards[dests[e]] += 1
+        rewards[dests[e]] += PASSING_REWARD
         state[e,xi,newlead] -= length
         overflowed = add_car(newrd,state[e,:,newlead],state,
             leading,lastcar,tick,rewards,dests) or overflowed
@@ -205,6 +232,11 @@ class TrafficEnv(gym.Env):
   def cars_on_roads(self):
     return np.reshape(cars_on_roads(self.leading, self.lastcar)[:self.graph.train_roads],
       [self.graph.m, self.graph.n, 4])
+
+  def remi(self, cum_passed):
+    remi(self.graph.dest,self.graph.phases,self.current_phase,
+        self.state,self.rewards,self.leading,self.lastcar,cum_passed)
+    return self.rewards
 
   def _reset(self):
     self.steps = np.float32(0)

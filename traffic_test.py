@@ -21,6 +21,7 @@ flags.DEFINE_integer('light_secs', 5, 'Seconds per light')
 flags.DEFINE_float('warmup_lights', 2, 'Number of lights to choose randomly')
 flags.DEFINE_integer('local_weight', 2, 'Weight to give local elements')
 flags.DEFINE_boolean('squish_rewards', True, "Should we take an average of vector rewards?")
+flags.DEFINE_boolean('remi', True, "Should we do remi scoring")
 
 EPS = 1e-8
 
@@ -29,7 +30,7 @@ def Repeater(repeat_count):
   class Repeater(gym.Wrapper):
     def __init__(self, env):
       super(Repeater, self).__init__(env)
-      self.r = self.unwrapped.graph.roads
+      self.r = self.unwrapped.graph.train_roads
       self.i = self.unwrapped.graph.intersections
       self.observation_space = GSpace(np.ones(self.r + self.i, dtype=np.float32))
     def _step(self, action):
@@ -46,6 +47,11 @@ def Repeater(repeat_count):
       return total_obs, total_reward, done, info
   return Repeater
 
+class Remi(gym.Wrapper):
+  def _step(self, action):
+    obs, reward, done, info = self.env.step(action)
+    return obs, self.unwrapped.remi(obs[:4]), done, info
+    
 class LocalizeWrapper(gym.RewardWrapper):
   def _reward(self, a):
     d = np.diag(a) * (FLAGS.local_weight - 1)
@@ -66,6 +72,7 @@ def make_env():
   if FLAGS.render: env.rendering = True
   env = Repeater(FLAGS.light_iterations)(env)
   if FLAGS.warmup_lights > 0: env = WarmupWrapper(FLAGS.warmup_lights)(env)
+  if FLAGS.remi: env = Remi(env)
   # if FLAGS.local_weight > 1: env = LocalizeWrapper(env)
   # if FLAGS.squish_rewards: env = SquishReward(env)
   return env
