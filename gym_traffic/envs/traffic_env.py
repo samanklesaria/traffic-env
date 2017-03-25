@@ -20,8 +20,7 @@ flags.DEFINE_boolean('learn_switch', False, "Learn switches, not phases")
 PASSING_REWARD = 0 # 1
 YELLOW_TICKS = 6
 DECEL_PENALTY = False
-OVERFLOW_PENALTY = 0 # 2
-WAITING_PENALTY = 0
+OVERFLOW_PENALTY = 2
 CAPACITY = 20
 EPS = 1e-8
 
@@ -62,31 +61,20 @@ def sim(r, ld, me):
   me[vi] = np.maximum(0, v + dvr)
   return dvr
 
-# we could optimize this by keeping track of passing by
-# destination and waiting by car.
-# make these accessible to a reward wrapper
-THRESHOLD = 0.01
-# @jit(void(int32[:],int32[:],int32[:],float32[:,:,:],float32[:],
-#   int32[:],int32[:],int32[:]), nopython=True,nogil=True,cache=True)
-def remi(dests,phases,current_phase,state,rewards,leading,lastcar,passed):
+@jit(void(int32[:],int32[:],int32[:],float32[:],
+  boolean[:],int32[:]), nopython=True,nogil=True,cache=True)
+def remi(dests,phases,current_phase,rewards,passed_dst,waiting):
   # if cars are stopped on red roads while no passing occurs, -= 1
   # if passing occurs and no cars are stopped on green roads += 1
-  passing_occurs = np.zeros_like(rewards, dtype=np.bool8)
+  # rewards[:] = 0
   for (e,dst) in enumerate(dests):
     if dst == -1: break
-    passing_occurs[dst] = passed[e] > 0
-  for (e,dst) in enumerate(dests):
-    if dst == -1: break
-    if leading[e] > lastcar[e]:
-      waiting = (state[e,vi,leading[e]+1:] < THRESHOLD).any() or \
-        (state[e,vi,1:lastcar[e]+1] < THRESHOLD).any()
-    else:
-      waiting = (state[e,vi,leading[e]+1:lastcar[e]+1] < THRESHOLD).any()
     green = phases[e] != current_phase[dst]
-    if waiting and not green and not passing_occurs[dst]:
+    if waiting[e] > 0 and not green and not passed_dst[dst]:
       rewards[dst] -= 1
-    elif passing_occurs[dst] and green and not waiting:
+    elif passed_dst[dst] and green and not waiting[e] > 0:
       rewards[dst] += 1
+  passed_dst[:] = False
 
 # Update the leading car at the end of each road depending on light phases
 @jit(void(int32[:],int32[:],float32,int32[:],float32[:,:,:],int32[:],int32[:],int32[:],int32[:]),
@@ -127,15 +115,17 @@ def add_car(road,car,state,leading,lastcar,tick,rewards,dests):
 
 # Remove cars with x coordinates beyond their roads' lengths
 @jit(boolean(int32[:],float32,int32[:],float32[:,:,:],int32[:],int32[:],int32[:],float32[:],
-  float32),nopython=True,nogil=True,cache=True)
-def advance_finished_cars(dests,length,nexts,state,leading,lastcar,passed,rewards,tick):
+  boolean[:],float32),nopython=True,nogil=True,cache=True)
+def advance_finished_cars(dests,length,nexts,state,leading,lastcar,passed,
+    rewards,passed_dst,tick):
   overflowed = False
   for e in range(nexts.shape[0]):
     while leading[e] != lastcar[e] and state[e,xi,wrap(leading[e]+1)] > length:
       newlead = wrap(leading[e]+1)
       newrd = nexts[e]
-      passed[e] += 1
       if newrd >= 0:
+        passed[e] += 1
+        passed_dst[dests[e]] = True
         rewards[dests[e]] += PASSING_REWARD
         state[e,xi,newlead] -= length
         overflowed = add_car(newrd,state[e,:,newlead],state,
@@ -173,10 +163,10 @@ def inv_popcount(inv_i):
   return (((i + (i >> 4) & 0xF0F0F0F) * 0x1010101) & 0xffffffff) >> 24
 
 @jit(boolean(int32[:],int32[:],float32,int32[:],float32[:,:,:],int32[:],int32[:],
-  float32,int32[:],int32[:],int32[:],float32[:],float32),
+  float32,int32[:],int32[:],int32[:],float32[:],boolean[:],int32[:],float32),
   nopython=True,nogil=True,cache=True)
 def move_cars(dests,phases,length,nexts,state,leading,lastcar,rate,current_phase,elapsed,
-    passed,rewards,tick):
+    passed,rewards,passed_dst,waiting,tick):
   update_lights(dests,phases,length,nexts,state,leading,lastcar,current_phase,elapsed)
   for e in range(leading.shape[0]):
     if leading[e] == lastcar[e]: continue
@@ -184,13 +174,19 @@ def move_cars(dests,phases,length,nexts,state,leading,lastcar,rate,current_phase
       dv = sim(rate, state[e,:,leading[e]:lastcar[e]], state[e,:,leading[e]+1:lastcar[e]+1])
       if DECEL_PENALTY and dests[e] >= 0:
         rewards[dests[e]] += np.sum((dv < 0)) / 10
+      if dests[e] >= 0:
+        waiting[e] = np.sum((state[e,xi,leading[e]+1:lastcar[e]+1] > (length - 10)).astype(np.int32))
     else:
       state[e,:,0] = state[e,:,-1]
       dv = sim(rate, state[e,:,leading[e]:-1], state[e,:,leading[e]+1:])
       dv2 = sim(rate, state[e,:,:lastcar[e]], state[e,:,1:lastcar[e]+1])
       if DECEL_PENALTY and dests[e] >= 0:
         rewards[dests[e]] += (np.sum(dv < 0) + np.sum(dv2 < 0)) / 10
-  return advance_finished_cars(dests,length,nexts,state,leading,lastcar,passed,rewards,tick)
+      if dests[e] >= 0:
+        waiting[e] = np.sum((state[e,xi,leading[e]+1:] > (length - 10)).astype(np.int32))
+        waiting[e] += np.sum((state[e,xi,1:lastcar[e]+1] > (length - 10)).astype(np.int32))
+  return advance_finished_cars(dests,length,nexts,state,leading,lastcar,passed,
+      rewards,passed_dst,tick)
 
 @jit(int32[:,](int32[:],int32[:]),nopython=True,nogil=True,cache=True)
 def cars_on_roads(leading, lastcar):
@@ -217,11 +213,8 @@ class TrafficEnv(gym.Env):
     overflowed = move_cars(self.graph.dest, self.graph.phases, self.graph.len,
         self.graph.nexts, self.state, self.leading, self.lastcar, FLAGS.rate,
         self.current_phase, self.elapsed, self.passed, self.rewards,
-        self.steps) or overflowed
+        self.passed_dst, self.waiting, self.steps) or overflowed
     self.steps += 1
-    if WAITING_PENALTY:
-      self.rewards -= np.reshape(np.sum(
-        np.square(self.obs[:4]), axis=0) * WAITING_PENALTY, -1)
     return self.obs, self.rewards, overflowed, None
 
   def seed_generator(self, seed=None):
@@ -233,11 +226,6 @@ class TrafficEnv(gym.Env):
     return np.reshape(cars_on_roads(self.leading, self.lastcar)[:self.graph.train_roads],
       [self.graph.m, self.graph.n, 4])
 
-  def remi(self, cum_passed):
-    remi(self.graph.dest,self.graph.phases,self.current_phase,
-        self.state,self.rewards,self.leading,self.lastcar,cum_passed)
-    return self.rewards
-
   def _reset(self):
     self.steps = np.float32(0)
     self.generated_cars = 0
@@ -247,6 +235,7 @@ class TrafficEnv(gym.Env):
     self.passed[:] = 0
     self.leading[:] = 1
     self.lastcar[:] = 1
+    self.passed_dst[:] = False
     self.current_phase[:] = self.action_space.sample()
     self.passed[:] = 0
     return self.obs
@@ -345,18 +334,24 @@ class TrafficEnv(gym.Env):
     self.leading = np.empty(graph.roads, dtype=np.int32)
     self.lastcar = np.empty(graph.roads, dtype=np.int32)
     self.action_space = GSpace(np.ones(graph.intersections, dtype=np.int32) + 1)
-    obs_limit = np.empty(graph.roads + 2 * graph.intersections, dtype=np.int32)
-    obs_limit[:graph.roads] = CAPACITY - 2
-    obs_limit[graph.roads:graph.roads + graph.intersections] = 2
-    obs_limit[-graph.intersections:] = 150
+    r = graph.train_roads
+    i = graph.intersections
+    obs_limit = np.ones(2 * r + 2 * i, dtype=np.int32)
     self.observation_space = GSpace(obs_limit)
     self.obs = np.zeros_like(obs_limit)
-    self.passed = self.obs[:graph.roads]
-    self.current_phase = self.obs[graph.roads:graph.roads + graph.intersections]
-    self.elapsed = self.obs[-graph.intersections:]
-    self.rewards = np.empty(graph.intersections, dtype=np.float32)
+    self.passed = self.obs[:r]
+    self.waiting = self.obs[r:r+r]
+    self.current_phase = self.obs[r+r:r+r+i]
+    self.elapsed = self.obs[-i:]
+    self.rewards = np.empty(i, dtype=np.float32)
     self.reward_size = self.rewards.size
+    self.passed_dst = np.zeros(i,dtype=np.bool8)
     self.reset_entrypoints()
+
+  def remi_reward(self):
+    remi(self.graph.dest,self.graph.phases,self.current_phase,self.rewards,
+      self.passed_dst,self.waiting)
+    return self.rewards
 
   def reset_entrypoints(self):
     if FLAGS.entry == "random": spec = np.random.randint(0b1111, dtype='uint32')

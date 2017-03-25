@@ -8,6 +8,7 @@ from functools import partial
 flags = tf.app.flags
 FLAGS = flags.FLAGS
 flags.DEFINE_boolean('restore', False, "Should we restore from checkpoint")
+flags.DEFINE_boolean('grad_summary', False, "Should we show obs grad summaries")
 flags.DEFINE_boolean('print_discounted', True, "Should we print total episode rewards discounted")
 flags.DEFINE_boolean('save_settings', False, "Should we save settings")
 flags.DEFINE_boolean('validate', False, 'Run a validation loop without training')

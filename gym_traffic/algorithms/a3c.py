@@ -49,6 +49,7 @@ class A3CNet:
     value_loss = 0.5 * tf.reduce_sum(tf.square(self.target_v - self.value))
     entropy = -tf.reduce_mean(self.probs * tf.log(self.probs + EPS))
     loss = 0.5 * value_loss + policy_loss - entropy * 0.001
+    tf.summary.scalar("mean_value", tf.mean(self.value))
     tf.summary.scalar("loss", loss)
     tf.summary.scalar("entropy", entropy)
     tf.summary.scalar("value_loss", value_loss)
@@ -56,11 +57,13 @@ class A3CNet:
     self.local_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, tf.get_variable_scope().name)
     gradients = tf.gradients(loss,self.local_vars)
     self.grads,_ = tf.clip_by_global_norm(gradients,40.0)
-    prob_grads = [tf.gradients(self.probs[0][i],
-      [self.observations, self.state_in]) for i in range(self.env.action_space.size)]
-    for (i,g) in enumerate(prob_grads):
-      tf.summary.histogram("obs_grad"+str(i), g[0])
-      tf.summary.histogram("state_grad"+str(i), g[1])
+    if FLAGS.grad_summary:
+      prob_grads = [tf.gradients(self.probs[0][i],
+        [self.observations, self.state_in]) for i in range(self.env.action_space.size)]
+      for (i,g) in enumerate(prob_grads):
+        tf.summary.histogram("obs_grad"+str(i), g[0])
+        tf.summary.histogram("state_grad"+str(i), g[1])
+    tl.summarize_activations(self.name)
     self.summary = tf.summary.merge(tf.get_collection(tf.GraphKeys.SUMMARIES, self.name))
 
   def make_apply_ops(self, opt):

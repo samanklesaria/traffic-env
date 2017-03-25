@@ -32,16 +32,17 @@ def Repeater(repeat_count):
       super(Repeater, self).__init__(env)
       self.r = self.unwrapped.graph.train_roads
       self.i = self.unwrapped.graph.intersections
-      self.observation_space = GSpace(np.ones(self.r + self.i, dtype=np.float32))
+      self.observation_space = GSpace(np.ones(2 * self.r + self.i, dtype=np.float32))
     def _step(self, action):
       done = False
       total_reward = 0
-      total_obs = np.zeros(self.r + self.i, dtype=np.float32)
+      total_obs = np.zeros_like(self.observation_space.limit)
       for _ in range(repeat_count):
         obs, reward, done, info = self.env.step(action)
         total_obs[:self.r] += obs[:self.r]
-        multiplier = 2 * obs[self.r:self.r+self.i] - 1
-        total_obs[self.r:] = obs[-self.i:] / 100 * multiplier
+        total_obs[self.r:2*self.r] = obs[self.r:2*self.r]
+        multiplier = 2 * obs[-2*self.i:-self.i] - 1
+        total_obs[-self.i:] = obs[-self.i:] / 100 * multiplier
         total_reward += reward
         if done: break
       return total_obs, total_reward, done, info
@@ -49,8 +50,8 @@ def Repeater(repeat_count):
 
 class Remi(gym.Wrapper):
   def _step(self, action):
-    obs, reward, done, info = self.env.step(action)
-    return obs, self.unwrapped.remi(obs[:4]), done, info
+    obs, _, done, info = self.env.step(action)
+    return obs, self.unwrapped.remi_reward(), done, info
     
 class LocalizeWrapper(gym.RewardWrapper):
   def _reward(self, a):
