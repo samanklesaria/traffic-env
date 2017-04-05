@@ -67,14 +67,14 @@ class SquishReward(gym.RewardWrapper):
 
 def make_env():
   env = gym.make('traffic-v0')
-  env.set_graph(GridRoad(1,1,250))
+  env.set_graph(GridRoad(3,3,250))
   env.seed_generator()
   env.reset_entrypoints()
   if FLAGS.render: env.rendering = True
   env = Repeater(FLAGS.light_iterations)(env)
   if FLAGS.warmup_lights > 0: env = WarmupWrapper(FLAGS.warmup_lights)(env)
   if FLAGS.remi: env = Remi(env)
-  # if FLAGS.local_weight > 1: env = LocalizeWrapper(env)
+  if FLAGS.local_weight > 1: env = LocalizeWrapper(env)
   # if FLAGS.squish_rewards: env = SquishReward(env)
   return env
 

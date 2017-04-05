@@ -17,7 +17,7 @@ flags.DEFINE_string('entry', 'all', 'Where should cars enter from?')
 flags.DEFINE_boolean('learn_switch', False, "Learn switches, not phases")
 
 # Python attribute access is expensive. We hardcode these params
-PASSING_REWARD = 0 # 1
+PASSING_REWARD = 1
 YELLOW_TICKS = 6
 DECEL_PENALTY = False
 OVERFLOW_PENALTY = 2
@@ -66,7 +66,7 @@ def sim(r, ld, me):
 def remi(dests,phases,current_phase,rewards,passed_dst,waiting):
   # if cars are stopped on red roads while no passing occurs, -= 1
   # if passing occurs and no cars are stopped on green roads += 1
-  # rewards[:] = 0
+  rewards[:] = 0
   for (e,dst) in enumerate(dests):
     if dst == -1: break
     green = phases[e] != current_phase[dst]

@@ -26,14 +26,14 @@ class A3CNet:
     self.episode_num = tf.Variable(0,dtype=tf.int32,name='episode_num',trainable=False)
     self.increment_episode = tf.stop_gradient(self.episode_num.assign_add(1))
     self.observations = tf.placeholder(tf.float32, [None,*obs_shape], name="observations")
-    gru = rnn.GRUCell(60)
+    gru = rnn.GRUCell(120)
     self.state_in = gru.zero_state(1, tf.float32)
     self.rnn_out, self.state_out = tf.nn.dynamic_rnn(gru,
         tf.expand_dims(self.observations,0),
         initial_state=self.state_in, dtype=np.float32)
     mid = tf.squeeze(self.rnn_out, 0, name="mid")
     tf.add_to_collection(tf.GraphKeys.ACTIVATIONS, mid)
-    self.hidden = tl.fully_connected(mid, 60, outputs_collections=tf.GraphKeys.ACTIVATIONS)
+    self.hidden = tl.fully_connected(mid, 100, outputs_collections=tf.GraphKeys.ACTIVATIONS)
     self.score = tl.fully_connected(self.hidden, self.env.action_space.size, activation_fn=None)
     self.probs = tf.nn.sigmoid(self.score)
     tf.summary.histogram("probs", self.probs)
@@ -49,7 +49,7 @@ class A3CNet:
     value_loss = 0.5 * tf.reduce_sum(tf.square(self.target_v - self.value))
     entropy = -tf.reduce_mean(self.probs * tf.log(self.probs + EPS))
     loss = 0.5 * value_loss + policy_loss - entropy * 0.001
-    tf.summary.scalar("mean_value", tf.mean(self.value))
+    tf.summary.scalar("value", tf.reduce_sum(self.value))
     tf.summary.scalar("loss", loss)
     tf.summary.scalar("entropy", entropy)
     tf.summary.scalar("value_loss", value_loss)
