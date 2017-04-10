@@ -7,14 +7,13 @@ import numba
 import itertools
 import time
 import math
+from args import FLAGS, add_argument
 
-flags = tf.app.flags
-FLAGS = flags.FLAGS
-flags.DEFINE_float('local_cars_per_sec', 0.1, 'Cars entering the system per second')
-flags.DEFINE_float('rate', 0.5, 'Number of seconds between simulator ticks')
-flags.DEFINE_boolean('poisson', True, 'Should we use a Poisson distribution?')
-flags.DEFINE_string('entry', 'all', 'Where should cars enter from?')
-flags.DEFINE_boolean('learn_switch', False, "Learn switches, not phases")
+add_argument('--local_cars_per_sec', 0.1, type=float)
+add_argument('--rate', 0.5, type=float)
+add_argument('--poisson',True, type=bool)
+add_argument('--entry', 'all')
+add_argument('--learn_switch', False, type=bool)
 
 # Python attribute access is expensive. We hardcode these params
 PASSING_REWARD = 1

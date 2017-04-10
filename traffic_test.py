@@ -13,15 +13,15 @@ import gym_traffic.algorithms.const1 as const1
 import gym_traffic.algorithms.greedy as greedy
 import gym_traffic.algorithms.util
 import gym_traffic.algorithms.fixed as fixed
+import args
+from args import FLAGS
 
-flags = tf.app.flags
-FLAGS = flags.FLAGS
-flags.DEFINE_integer('episode_secs', 600, 'Secs per episode')
-flags.DEFINE_integer('light_secs', 5, 'Seconds per light')
-flags.DEFINE_float('warmup_lights', 2, 'Number of lights to choose randomly')
-flags.DEFINE_integer('local_weight', 2, 'Weight to give local elements')
-flags.DEFINE_boolean('squish_rewards', True, "Should we take an average of vector rewards?")
-flags.DEFINE_boolean('remi', True, "Should we do remi scoring")
+args.add_argument('--episode_secs', 600, type=int)
+args.add_argument('--light_secs', 5, type=int)
+args.add_argument('--warmup_lights', 2, type=int)
+args.add_argument('--local_weight', 2, type=int)
+args.add_argument('--squish_rewards', True, type=bool)
+args.add_argument('--remi', True, type=bool)
 
 EPS = 1e-8
 
@@ -78,23 +78,14 @@ def make_env():
   # if FLAGS.squish_rewards: env = SquishReward(env)
   return env
 
-transients = ['mode', 'render', 'restore', 'save_settings']
-
-def main(*_):
-  if FLAGS.save_settings:
-    with open('settings', 'w') as f:
-      json.dump(FLAGS.__flags, f, indent=4, separators=(',', ': '))
+def derive_flags():
   FLAGS.episode_len = int(FLAGS.episode_secs / FLAGS.light_secs)
   FLAGS.light_iterations = int(FLAGS.light_secs / FLAGS.rate)
   FLAGS.episode_ticks = int(FLAGS.episode_secs / FLAGS.rate)
   if FLAGS.mode == 'weights': FLAGS.restore = True
   if FLAGS.render: FLAGS.mode = 'validate'
-  globals()[FLAGS.trainer].run(make_env)
 
 if __name__ == '__main__':
-  try:
-    with open('settings', 'r') as f:
-      for k, v in json.load(f).items():
-        if k not in transients: setattr(FLAGS, k, v)
-  except FileNotFoundError: pass
-  tf.app.run()
+  args.parse_flags()
+  derive_flags()
+  globals()[FLAGS.trainer].run(make_env, derive_flags)

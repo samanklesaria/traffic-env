@@ -121,27 +121,27 @@ def train_model(sess, writer, weight_saver, master_env, envs):
     if episode_num: weight_saver.save(sess, model_file, global_step=episode_num)
     raise
 
-# How should flags work?
-# there should be ground defaults
-# these are overridden by anything that was saved when the graph was defined
-# explicitly specified flags should override the rest.
-
-def run(env_f):
+def run(env_f, derive_flags):
   master_env = env_f()
-  envs = [env_f() for _ in range(FLAGS.threads)]
   if not FLAGS.restore:
     remkdir(FLAGS.logdir)
     with tf.device("/cpu:0"):
       opt = tf.train.AdamOptimizer(learning_rate=FLAGS.learning_rate)
-      with tf.variable_scope("hparams"):
-        for (k,v) in FLAGS.__flags.items():
-          tf.constant(v, name=k)
+      for (k,v) in vars(FLAGS).items():
+        tf.add_to_collection("hparams",tf.constant(v, name=k))
+      envs = [env_f() for _ in range(FLAGS.threads)]
       build_net(master_env, opt, False, "global")
       for (i,e) in enumerate(envs): build_net(e, opt, True, 'w'+str(i))
   with tf.Session() as sess:
     if FLAGS.restore:
       latest = tf.train.latest_checkpoint(FLAGS.logdir)
       tf.train.import_meta_graph(latest + '.meta').restore(sess, latest)
+      hp = tf.get_collection("hparams")
+      with (k,v) in zip(hp, sess.run(hp)):
+        print("GOT", k.name, v)
+        FLAGS.k = v
+      derive_flags()
+      envs = [env_f() for _ in range(FLAGS.threads)]
     else: sess.run(tf.global_variables_initializer())
     if FLAGS.mode == "validate":
       summary_writer = tf.summary.FileWriter("val_dir", tf.get_default_graph())

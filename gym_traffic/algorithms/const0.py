@@ -5,7 +5,7 @@ from util import print_running_stats
 flags = tf.app.flags
 FLAGS = flags.FLAGS
 
-def run(env_f):
+def run(env_f,_):
   env = env_f()
   zeros = np.zeros(env.action_space.shape)
   def rewards():

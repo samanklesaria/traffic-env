@@ -6,7 +6,7 @@ from gym_traffic.envs.traffic_env import cars_on_roads
 flags = tf.app.flags
 FLAGS = flags.FLAGS
 
-def run(env_f):
+def run(env_f,_):
   FLAGS.learn_switch = False
   env = env_f()
   def rewards():

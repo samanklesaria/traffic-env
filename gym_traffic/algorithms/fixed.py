@@ -8,7 +8,7 @@ FLAGS = flags.FLAGS
 def phase(i):
   return int((i % 6) >= 3)
 
-def run(env_f):
+def run(env_f,_):
   FLAGS.learn_switch = False
   env = env_f()
   actions = np.zeros((2, *env.action_space.shape))

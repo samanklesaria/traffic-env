@@ -5,7 +5,7 @@ from util import print_running_stats
 flags = tf.app.flags
 FLAGS = flags.FLAGS
 
-def run(env_f):
+def run(env_f,_):
   FLAGS.learn_switch = False
   env = env_f()
   def rewards():
