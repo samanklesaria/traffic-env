@@ -21,7 +21,7 @@ args.add_argument('--light_secs', 5, type=int)
 args.add_argument('--warmup_lights', 2, type=int)
 args.add_argument('--local_weight', 2, type=int)
 args.add_argument('--squish_rewards', True, type=bool)
-args.add_argument('--remi', True, type=bool)
+args.add_argument('--remi', False, type=bool)
 
 EPS = 1e-8
 

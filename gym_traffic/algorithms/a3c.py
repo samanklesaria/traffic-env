@@ -17,7 +17,7 @@ def build_net(env, opt, add_train_ops, name):
     episode_num = tf.Variable(0,dtype=tf.int32,name='episode_num',trainable=False)
     tf.stop_gradient(episode_num.assign_add(1), name="increment_episode")
     observations = tf.placeholder(tf.float32, [None,*obs_shape], name="observations")
-    gru = rnn.GRUCell(120)
+    gru = rnn.GRUCell(200)
     state_in = tf.identity(gru.zero_state(1, tf.float32), name="state_in")
     rnn_out, state_out = tf.nn.dynamic_rnn(gru,
         tf.expand_dims(observations, 0), initial_state=state_in, dtype=np.float32)
@@ -25,10 +25,11 @@ def build_net(env, opt, add_train_ops, name):
     tf.identity(state_out, name="state_out")
     mid = tf.squeeze(rnn_out, 0)
     tf.add_to_collection(tf.GraphKeys.ACTIVATIONS, mid)
-    hidden = tl.fully_connected(mid, 100, outputs_collections=tf.GraphKeys.ACTIVATIONS)
-    score = tl.fully_connected(hidden, env.action_space.size, activation_fn=None)
+    h0 = tl.fully_connected(mid, 100, outputs_collections=tf.GraphKeys.ACTIVATIONS)
+    h1 = tl.fully_connected(h0, 30, outputs_collections=tf.GraphKeys.ACTIVATIONS)
+    score = tl.fully_connected(h1, env.action_space.size, activation_fn=None)
     probs = tf.nn.sigmoid(score, name="probs")
-    value = tf.identity(tl.fully_connected(hidden, num_outputs=env.reward_size, activation_fn=None),
+    value = tf.identity(tl.fully_connected(h1, num_outputs=env.reward_size, activation_fn=None),
         name="value")
     tf.summary.scalar("value_sum", tf.reduce_sum(value))
     entropy = tf.negative(tf.reduce_mean(probs * tf.log(probs + EPS)))
