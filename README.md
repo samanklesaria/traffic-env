@@ -1,42 +1,19 @@
-What's Included
-===============
-- A reasonably fast and thread safe gym environment called TrafficEnv. It can simulate the intelligent
-driver model on any network topology. Written using numba for performance.
-- A network topology for grids.
-- A StrobeWrapper, which is like gym's SkipWrapper, but instead
-of discarding intervening observations, it samples them at regular 
-intervals and returns an array of the sampled observations.
-- A HistoryWrapper, which bundles up the observations of previous steps into an array.
-- A cross entropy method trainer which works on multidimensional
-action and reward spaces.
-- A simply policy gradient trainer for multidimensional spaces.
-- An asynchronous advantage actor critic trainer for multidimensional spaces.
-- Utilities for testing TrafficEnv, with a wrapper for penalizing actions that
-don't change enough, smeared rewards across intersections, zero centered
-and normalized observations. 
+Code Overview
+=============
+- The 'args.py' file handles argument parsing and the creation of derived flags.
+- The 'algorithms' directory contains reinforcement learning algorithms. Currently I support generic strategies 'a3c', 'indepq', and 'cem'. For comparison, 'random' makes random choices, 'const0' always chooses action 0, 'const1' chooses action 1, 'fixed' cycles between the two, waiting the number of steps given by the SPACING flag, and 'greedy' chooses the direction with more waiting cars.
+- The file 'util.py' in the algorithms directory contains common patterns in reinforcement learning: e-greedy strategies, boltzman sampling, running an episode, discounting rewards, etc. It also defines defaults for common reinforcement learning parameters. 
+- The simulation environment is defined in the file 'envs/traffic env.py'. It obeys the Intelligent Driver Model. The grid topology is defined in 'envs/roadgraph.py'. 
+- Because gym is designed with single-agent environments in mind, replaced the gym's notion of a space with what I called a GSpace (generic space). This code is in 'spaces/gspace.py'. There are other monkey patches in the main init file.
 
-
-Potential Points of Confusion
+Reproducing Training Sessions
 =============================
+The settings used for each session are saved to a settings.json file in the log directory. This means you can change default params for an algorithm without sacrificing the reproducibility of previous sessions.
+The tensorflow graph used in a run is also saved to disk. This means that as long as the input and output nodes dont' change, you an play with the neural net architecture without breaking previous runs.
 
-All trainers have the same interface: they define a 'run' function
-that takes a function that returns an environment to train. They
-take a function, not an environment, because trainers like A3C
-need to be able to make multiple environments.
-
-The gym Env class has been monkey patched so that 'step' will call
-'render' if the environment's 'rendering' attribute is true. This
-is necessary if you want to render each frame of a wrapped environment.
-This way, if you want to render and validate a policy at the same time,
-just pass an environment with the 'rendering' attribute turned on to
-a trainer's 'validate' function.
-
-The FLAGS object from tensorflow.app is abused to allow each
-component to specify its command line arguments.
-This is easier than centralizing all command line arguments
-and passing them each component in its constructor.
-
-For the TrafficEnv class, we use a ring buffer to store the cars on each road. The IDM requires each
+Intelligent Driver Model Implementation
+=============================
+I use a ring buffer to store the cars on each road. The IDM requires each
 car to have a leading car, so we introduce a fake car that the front car can follow. 
 On red lights, this fake car has position at the end of the road. On green lights, it's at
 the position of the first car on the next road ahead, or +inf if no such car exists.

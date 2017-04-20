@@ -1,11 +1,9 @@
 import tensorflow as tf
 import numpy as np
 from util import print_running_stats
+from args import FLAGS
 
-flags = tf.app.flags
-FLAGS = flags.FLAGS
-
-def run(env_f,_):
+def run(env_f):
   env = env_f()
   ones = np.ones(env.action_space.shape)
   def rewards():

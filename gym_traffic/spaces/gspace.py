@@ -22,7 +22,7 @@ class GSpace(gym.Space):
   def empty(self): return np.empty_like(self.limit)
 
   def to_action(self, a):
-    return np.reshape(np.array(a), self.limit.shape).astype(self.limit.dtype)
+    return np.reshape(a, self.limit.shape).astype(self.limit.dtype)
 
   def replicated(self, n):
     return GSpace(np.broadcast_to(self.limit, (n, *self.limit.shape)))

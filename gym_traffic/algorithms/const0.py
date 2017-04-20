@@ -1,11 +1,9 @@
 import tensorflow as tf
 import numpy as np
 from util import print_running_stats
+from args import FLAGS
 
-flags = tf.app.flags
-FLAGS = flags.FLAGS
-
-def run(env_f,_):
+def run(env_f):
   env = env_f()
   zeros = np.zeros(env.action_space.shape)
   def rewards():
@@ -15,6 +13,7 @@ def run(env_f,_):
       obs = env.reset()
       for _ in range(FLAGS.episode_len):
         obs, reward, done, _ = env.step(zeros)
+        if FLAGS.render: print("REWARD", reward)
         reward_sum += np.mean(reward) * (multiplier if FLAGS.print_discounted else 1)
         multiplier *= FLAGS.gamma
         if done: break
