@@ -87,7 +87,7 @@ def train_model(sess, dbg, writer, save, env):
   sess.run("update_chooser")
   sess.run("update_target")
   try:
-    while True:
+    while FLAGS.total_episodes is None or episode_num < FLAGS.total_episodes:
       episode_num = sess.run("episode_num:0")
       step = sess.run("global_step:0")
       for (t,s,a,r,s1,d) in epoch(sess, env, "main/explore:0"):

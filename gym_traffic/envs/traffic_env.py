@@ -1,7 +1,6 @@
 import gym
 from gym_traffic.spaces.gspace import GSpace
 import numpy as np
-import tensorflow as tf
 from numba import jit, void, float64, float32, int64, int32, uint32, boolean
 import numba
 import itertools
@@ -337,12 +336,12 @@ class TrafficEnv(gym.Env):
     self.state = np.empty((graph.roads, params, CAPACITY), dtype=np.float32)
     self.leading = np.empty(graph.roads, dtype=np.int32)
     self.lastcar = np.empty(graph.roads, dtype=np.int32)
-    self.action_space = GSpace(np.ones(graph.intersections, dtype=np.int32) + 1)
+    self.action_space = GSpace([graph.intersections], np.int32(2))
     r = graph.train_roads
     i = graph.intersections
-    obs_limit = np.ones(2 * r + 2 * i, dtype=np.int32)
-    self.observation_space = GSpace(obs_limit)
-    self.obs = np.zeros_like(obs_limit)
+    obs_shape = [2*r+2*i]
+    self.observation_space = GSpace(obs_shape, np.int32(1))
+    self.obs = np.zeros(obs_shape, dtype=np.int32)
     self.passed = self.obs[:r]
     self.detected = self.obs[r:r+r]
     self.current_phase = self.obs[r+r:r+r+i]

@@ -72,7 +72,7 @@ def train_model(env_f, sess, dbg, writer, save, master_env):
   for t in threads: t.start()
   episode_num = sess.run("global/episode_num:0")
   try:
-    while not coord.should_stop():
+    while FLAGS.total_episodes is None or episode_num < FLAGS.total_episodes:
       episode_num = sess.run("global/episode_num:0")
       sess.run("global/incr_episode")
       ev.wait()

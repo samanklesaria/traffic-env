@@ -7,8 +7,9 @@ import numpy as np
 class GSpaceWrapper(gym.Wrapper):
   def __init__(self, env):
     super().__init__(env)
-    self.observation_space = GSpace(env.observation_space.high)
-    self.action_space = GSpace([env.action_space.n])
+    lim = np.float32(np.min(env.observation_space.high))
+    self.observation_space = GSpace(env.observation_space.shape, lim)
+    self.action_space = GSpace([1], np.int32(env.action_space.n))
 
   def _step(self, action):
     obs, reward, done, info = self.env.step(np.asscalar(action))

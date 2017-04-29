@@ -3,18 +3,9 @@ import gym_traffic
 from gym_traffic.spaces.gspace import GSpace
 from gym_traffic.envs.roadgraph import GridRoad
 from gym_traffic.wrappers.warmup import WarmupWrapper
-import tensorflow as tf
 import numpy as np
-import gym_traffic.algorithms.a3c as a3c
-import gym_traffic.algorithms.random as random
-import gym_traffic.algorithms.const0 as const0
-import gym_traffic.algorithms.const1 as const1
-import gym_traffic.algorithms.greedy as greedy
-import gym_traffic.algorithms.qrnn as qrnn
-import gym_traffic.algorithms.qlearn as qlearn
-import gym_traffic.algorithms.spacedgreedy as spacedgreedy
-import gym_traffic.algorithms.fixed as fixed
 from args import parse_flags, add_argument, add_derivation, FLAGS
+from alg_flags import run_alg
 from gym_traffic.wrappers.history import HistoryWrapper
 
 add_argument('--episode_secs', 600, type=int)
@@ -39,11 +30,11 @@ def Repeater(repeat_count):
       super(Repeater, self).__init__(env)
       self.r = self.unwrapped.graph.train_roads
       self.i = self.unwrapped.graph.intersections
-      self.observation_space = GSpace(np.ones(2 * self.r + self.i, dtype=np.float32))
+      self.observation_space = GSpace([2*self.r+self.i], np.float32(1))
     def _step(self, action):
       done = False
       total_reward = 0
-      total_obs = np.zeros_like(self.observation_space.limit)
+      total_obs = np.zeros(self.observation_space.shape, dtype=np.float32)
       for _ in range(repeat_count):
         obs, reward, done, info = self.env.step(action)
         total_obs[:self.r] += obs[:self.r]
@@ -90,4 +81,4 @@ def make_env():
 
 if __name__ == '__main__':
   parse_flags()
-  globals()[FLAGS.trainer].run(make_env)
+  run_alg(make_env)
