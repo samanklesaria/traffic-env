@@ -67,7 +67,7 @@ class SquishReward(gym.RewardWrapper):
 
 def make_env():
   env = gym.make('traffic-v0')
-  env.set_graph(GridRoad(3,3,250))
+  env.set_graph(GridRoad(1,1,250))
   env.seed_generator()
   env.reset_entrypoints()
   if FLAGS.render: env.rendering = True
