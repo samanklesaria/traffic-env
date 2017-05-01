@@ -9,7 +9,6 @@ def epoch(sess, env, cmd):
   for t in range(FLAGS.episode_len):
     fd = {'observations:0': [obs]}
     if rnn is not None: fd['state_in:0'] = rnn
-    # y = sess.run(cmd, feed_dict=fd)
     y,rnn = sess.run([cmd,"state_out:0"], feed_dict=fd)
     obs, reward, done, _ = env.step(y[0])
     yield (t,obs,y[0].astype(np.float32),reward)
@@ -35,14 +34,13 @@ def train(sess, dbg, writer, save, env):
         epr /= (np.std(epr) + EPS)
       fd = {"observations:0": xs[:t+1], "actions:0": ys[:t+1], "rewards:0": epr}
       if episode_num % FLAGS.summary_rate == 0:
-        _, s = dbg.run(["train", "summaries:0"], fd)
+        _, s = sess.run(["train", "summaries:0"], fd)
         writer.add_summary(s, episode_num)
-      else: dbg.run("train", fd)
+      else: sess.run("train", fd)
       if episode_num % FLAGS.batch_size == FLAGS.batch_size - 1:
-        dbg.run("apply_grads")
-        dbg.run("reset")
+        sess.run("apply_grads")
+        sess.run("reset")
       if episode_num % FLAGS.validate_rate == 0:
-        # print("Reward", t)
         rew = validate(sess, env)
         print("Reward", rew)
         s = sess.run("avg_r_summary:0", feed_dict={"avg_r:0":rew})
@@ -58,9 +56,9 @@ def model(env):
   eps = exploration_param()
   observations = tf.placeholder(tf.float32, [None,*env.observation_space.shape], name="observations")
   reshape0 = tf.reshape(observations, [-1, env.observation_space.size]) 
-  # pre_gru = tf.layers.dense(reshape0, 10, tf.nn.relu, name="pre_gru_layer")
+  # pre_gru = tf.layers.dense(reshape0, 60, tf.nn.relu, name="pre_gru_layer")
   pre_gru = reshape0
-  gru = rnn.GRUCell(15)
+  gru = rnn.GRUCell(80)
   state_in = tf.identity(gru.zero_state(1, tf.float32), name="state_in")
   rnn_out, state_out = tf.nn.dynamic_rnn(gru,
     tf.expand_dims(pre_gru, 0), initial_state=state_in, dtype=tf.float32)
