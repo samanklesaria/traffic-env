@@ -8,7 +8,7 @@ import time
 import math
 from args import FLAGS, add_argument
 
-add_argument('--local_cars_per_sec', 0.08, type=float)
+add_argument('--local_cars_per_sec', 0.12, type=float)
 add_argument('--rate', 0.5, type=float)
 add_argument('--poisson',True, type=bool)
 add_argument('--entry', 'all')
@@ -20,7 +20,7 @@ THRESH = 0.1
 PASSING_REWARD = 0
 YELLOW_TICKS = 6
 DECEL_PENALTY = False
-OVERFLOW_PENALTY = 2
+OVERFLOW_PENALTY = 10
 CAPACITY = 20
 EPS = 1e-8
 

@@ -57,23 +57,21 @@ def model(env):
   eps = exploration_param()
   observations = tf.placeholder(tf.float32, [None,*env.observation_space.shape], name="observations")
   reshape0 = tf.reshape(observations, [-1, env.observation_space.size]) 
-  # pre_gru = tf.layers.dense(reshape0, 60, tf.nn.relu, name="pre_gru_layer")
-  pre_gru = reshape0
-  gru = rnn.GRUCell(80)
+  pre_gru = tf.layers.dense(reshape0, 30, tf.nn.relu, name="pre_gru_layer")
+  gru = rnn.GRUCell(30)
   state_in = tf.identity(gru.zero_state(1, tf.float32), name="state_in")
   rnn_out, state_out = tf.nn.dynamic_rnn(gru,
     tf.expand_dims(pre_gru, 0), initial_state=state_in, dtype=tf.float32)
   tf.identity(state_out, name="state_out")
   mid = tf.squeeze(rnn_out, 0, name="mid")
-  # h0 = tf.layers.dense(mid, 40, tf.nn.relu, name="hidden_layer")
-  h0 = mid
+  h0 = tf.layers.dense(mid, 30, tf.nn.relu, name="hidden_layer")
   score = tf.layers.dense(h0, env.action_space.size, name="score_layer")
   sigmoid_decision(score, eps)
   actions = tf.placeholder(tf.float32, [None, env.action_space.size], name="actions")
   rewards = tf.placeholder(tf.float32, [None, env.action_space.size], name="rewards")
-  loss = tf.reduce_mean(tf.reduce_sum(rewards *
-    tf.nn.sigmoid_cross_entropy_with_logits(logits=score, labels=actions, name="cross_entropy"),
-    axis=1), name="policy_loss")
+  loss = tf.reduce_sum(rewards *
+    tf.nn.sigmoid_cross_entropy_with_logits(logits=score, labels=actions,
+      name="cross_entropy"), name="policy_loss")
   tf.summary.scalar("loss", loss)
   opt = tf.train.AdamOptimizer(learning_rate=FLAGS.learning_rate) 
   grads = [(tf.Variable(tf.zeros(v.get_shape()), trainable=False), g, v)
