@@ -47,6 +47,7 @@ def train(sess, dbg, writer, save, env):
         writer.add_summary(s, episode_num)
       if episode_num % FLAGS.save_rate == 0:
         save(global_step=episode_num)
+      sess.run("dec_eps")
   finally:
     save(global_step=episode_num)
 
