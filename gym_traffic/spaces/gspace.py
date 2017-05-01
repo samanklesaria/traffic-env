@@ -3,7 +3,6 @@ import numpy as np
 
 class GSpace(gym.Space):
   def __init__(self, shape, l):
-    assert type(shape) == list
     self.limit = l
     self.shape = shape
     self.size = np.prod(shape)

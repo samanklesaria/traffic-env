@@ -76,7 +76,7 @@ def train_model(env_f, sess, dbg, writer, save, master_env):
       episode_num = sess.run("global/episode_num:0")
       sess.run("global/incr_episode")
       ev.wait()
-      if (episode_num % FLAGS.summary_rate) == 0:
+      if (episode_num % FLAGS.validate_rate) == 0:
         rew = validate(sess, master_env)
         print("Reward", rew)
         s = sess.run("avg_r_summary:0", feed_dict={"avg_r:0":rew})
@@ -95,7 +95,7 @@ def train_model(env_f, sess, dbg, writer, save, master_env):
 def train(sess, scope, xs, ys, vals, drs):
   drs[-1] = vals[-1]
   deltas = drs[:-1] + FLAGS.gamma * vals[1:] - vals[:-1]
-  drs = discount(drs, FLAGS.gamma)
+  drs = discount(drs, np.float32(FLAGS.gamma), False)
   advantages = discount(deltas, FLAGS.lam * FLAGS.gamma)
   fd = {scope+'/observations:0': xs, scope+'/actions:0': ys,
     scope+'/advantages:0': advantages, scope+'/target_v:0': drs[:-1]}

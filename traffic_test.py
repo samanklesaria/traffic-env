@@ -19,9 +19,7 @@ def secs_derivations():
   FLAGS.episode_len = int(FLAGS.episode_secs / FLAGS.light_secs)
   FLAGS.light_iterations = int(FLAGS.light_secs / FLAGS.rate)
   FLAGS.episode_ticks = int(FLAGS.episode_secs / FLAGS.rate)
-  if FLAGS.mode == 'weights': FLAGS.restore = True
-  if FLAGS.render: FLAGS.mode = 'validate'
-  if FLAGS.remi: FLAGS.reward_printing = "avg"
+  FLAGS.use_avg = True
 add_derivation(secs_derivations)
 
 def Repeater(repeat_count):

@@ -1,5 +1,4 @@
 import tensorflow as tf
-import scipy.signal
 import numpy as np
 import os.path
 import os
@@ -7,7 +6,7 @@ from functools import partial
 from util import *
 import json
 from args import PARSER, FLAGS, add_derivation
-
+from numba import jit, void, float32, boolean
 EPS = 1e-8
 
 def entropy(probs):
@@ -55,7 +54,7 @@ def handle_modes(env_f, model, val, train):
         from tensorflow.python import debug as tf_debug
         dbg = tf_debug.LocalCLIDebugWrapperSession(sess)
         # dbg.add_tensor_filter("has_inf_or_nan", tf_debug.has_inf_or_nan)
-      else: dbg = None
+      else: dbg = sess
       train(sess, dbg, summary_writer, partial(saver.save, sess, model_file), env)
 
 def remkdir(d):
@@ -98,7 +97,7 @@ def softmax_decision(scores, eps):
 
 def sigmoid_decision(scores, eps):
   tf.summary.histogram("scores", scores)
-  probs = tf.nn.sigmoid(scores)
+  probs = tf.nn.sigmoid(scores, name="prob_val")
   entropy(probs)
   tf.cast(tf.round(probs), tf.int32, name="greedy")
   if FLAGS.exploration == "e_greedy":
@@ -112,5 +111,14 @@ def sigmoid_decision(scores, eps):
 def isclose(a,b):
   assert np.all(np.abs(a - b) < 0.0001), (a, b)
 
-def discount(a, gamma):
-  return scipy.signal.lfilter([1], [1, -gamma], a[::-1], axis=0)[::-1]
+@jit(void(float32[:,:],float32, boolean),nopython=True,nogil=True,cache=True)
+def discount(a, gamma, use_avg):
+  for i in range(len(a)-1, 0, -1):
+    a[i-1] += gamma * a[i] 
+  if use_avg:
+    denom = 1.0
+    extras = gamma
+    for i in range(len(a), 0, -1):
+      a[i-1] /= denom
+      denom += extras
+      extras *= gamma 
