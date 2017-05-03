@@ -1,14 +1,22 @@
 import tensorflow as tf
 from gym_traffic.algorithms.util import *
 
-def use_history():
-  if FLAGS.trainer == 'qlearn': FLAGS.history = 6
-add_derivation(use_history)
+# Track maxQ and overall Q distributions. Ensure they converge to something reasonable.
+
+add_argument('--beta', 0.001, type=float)
+
+def qlearn_derivations():
+  if FLAGS.trainer == 'qlearn':
+    FLAGS.history = 6
+    # How does r learning work when you use a gamma?
+    # I don't think it does, but could be interesting to investigate
+    if FLAGS.use_avg: FLAGS.gamma = 1
+add_derivation(qlearn_derivations)
 
 def build_net(env, temp, observations):
   reshaped = tf.reshape(observations, [-1, env.observation_space.size])
-  h0 = tf.layers.dense(reshaped, 200, tf.nn.relu)
-  h1 = tf.layers.dense(h0, 200, tf.nn.relu)
+  h0 = tf.layers.dense(reshaped, 100, tf.nn.relu)
+  h1 = tf.layers.dense(h0, 100, tf.nn.relu)
   flat_qval = tf.layers.dense(h1, env.action_space.size * 2, name="qout")
   qvals = tf.reshape(flat_qval, (-1, env.action_space.size, 2), name="qvals")
   softmax_decision(qvals, temp)
@@ -48,6 +56,10 @@ def model(env):
   episode_num = tf.Variable(0,dtype=tf.int32,name='episode_num',trainable=False)
   tf.assign_add(episode_num, 1, name="incr_episode")
   eps = exploration_param()
+  if FLAGS.use_avg:
+    rho = tf.Variable(tf.random_normal([]), name="rho")
+    tf.summary.scalar("rho_val", rho)
+  else: rho = 0
   actions, rewards, observations, new_observations, notdone = exp_replay(env)
   with tf.variable_scope("main"): build_net(env, eps, observations)
   with tf.variable_scope("chooser"): build_net(env, eps, new_observations)
@@ -60,13 +72,25 @@ def model(env):
     tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'chooser'))], name="update_chooser")
   policy_onehot = tf.one_hot(ref("chooser/greedy:0"), 2, dtype=tf.float32)
   nextQ = tf.reduce_sum(tf.multiply(ref("target/qvals:0"), policy_onehot), axis=2)
-  targetQ = tf.stop_gradient(rewards + FLAGS.gamma * notdone * nextQ, name="targetQ")
+  targetQ = tf.stop_gradient(rewards - rho + FLAGS.gamma * notdone * nextQ, name="targetQ")
   actions_onehot = tf.one_hot(actions, 2, dtype=tf.float32)
-  predictedQ = tf.reduce_sum(tf.multiply(ref("main/qvals:0"), actions_onehot), axis=2, name="predictedQ")
-  loss = tf.reduce_mean(tf.reduce_sum(tf.square(targetQ - predictedQ), axis=1), name="td_err")
+  predictedQ = tf.reduce_sum(tf.multiply(ref("main/qvals:0"), actions_onehot),
+      axis=2, name="predictedQ")
+  diff = tf.subtract(targetQ, predictedQ, name="diff")
+  rho_update = []
+  if FLAGS.use_avg:
+    on_policy = tf.cast(tf.equal(actions, ref("main/greedy:0")), tf.float32, name="on_policy")
+    num_on_policy = tf.reduce_sum(on_policy)
+    tf.summary.scalar("num_on_policy", num_on_policy)
+    rho_update = [tf.assign_add(rho, FLAGS.beta * tf.reduce_sum(on_policy * diff) / num_on_policy)]
+  loss = tf.reduce_mean(tf.square(targetQ - predictedQ), name="td_err")
   opt = tf.train.AdamOptimizer(learning_rate=FLAGS.learning_rate)
-  opt.minimize(loss, var_list=tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'main'),
-      name="train", global_step=step)
+  # train = opt.minimize(loss, var_list=tf.get_collection(
+  #   tf.GraphKeys.TRAINABLE_VARIABLES, 'main'), global_step=step)
+  main_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'main')
+  grads,_ = tf.clip_by_global_norm(tf.gradients(loss, main_vars), 10.0)
+  train = opt.apply_gradients(zip(grads, main_vars), global_step=step)
+  tf.group(train, *rho_update, name="train")
   tf.summary.scalar("max_predicted_q", tf.reduce_max(predictedQ))
   tf.summary.scalar("loss", loss)
   tf.summary.merge(tf.get_collection(tf.GraphKeys.SUMMARIES), name="desc")
@@ -82,23 +106,22 @@ def epoch(sess, env, cmd):
     obs = new_obs
 
 def train_model(sess, dbg, writer, save, env):
-  episode_num = 0
-  step = None
+  episode_num, step = sess.run(["episode_num:0", "global_step:0"])
   sess.run("update_chooser")
   sess.run("update_target")
   try:
     while FLAGS.total_episodes is None or episode_num < FLAGS.total_episodes:
       episode_num = sess.run("episode_num:0")
-      step = sess.run("global_step:0")
       for (t,s,a,r,s1,d) in epoch(sess, env, "main/explore:0"):
         ix = sess.run("replay/exp_idx:0")
         sess.run("add_experience", feed_dict={'a:0':a,'s:0':s,'s1:0':s1,'r:0':r,'d:0':d})
         if ix >= FLAGS.buffer_size and (ix % FLAGS.train_rate) == 0:
           if step % FLAGS.summary_rate == 0:
-            _,smry = sess.run(["train", "desc/desc:0"], feed_dict={'batch/n:0':FLAGS.batch_size})
+            _,smry = dbg.run(["train","desc/desc:0"], feed_dict={'batch/n:0':FLAGS.batch_size})
             writer.add_summary(smry, step)
           else:
-            sess.run("train", feed_dict={'batch/n:0':FLAGS.batch_size})
+            dbg.run("train", feed_dict={'batch/n:0':FLAGS.batch_size})
+          step = sess.run("global_step:0")
           sess.run("update_chooser")
         if step % FLAGS.target_update_rate == 0:
           sess.run("update_target")
@@ -108,7 +131,7 @@ def train_model(sess, dbg, writer, save, env):
         rew = validate(sess, env)
         print("Reward", rew)
         smry = sess.run("avg_r_summary:0", feed_dict={"avg_r:0":rew})
-        writer.add_summary(smry, step)
+        writer.add_summary(smry, episode_num)
       if episode_num % FLAGS.save_rate == 0:
         save(global_step=step)
   finally:

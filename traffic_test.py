@@ -19,7 +19,7 @@ def secs_derivations():
   FLAGS.episode_len = int(FLAGS.episode_secs / FLAGS.light_secs)
   FLAGS.light_iterations = int(FLAGS.light_secs / FLAGS.rate)
   FLAGS.episode_ticks = int(FLAGS.episode_secs / FLAGS.rate)
-  FLAGS.use_avg = True
+  if FLAGS.trainer == 'polgrad_rnn': FLAGS.use_avg = True
 add_derivation(secs_derivations)
 
 def Repeater(repeat_count):

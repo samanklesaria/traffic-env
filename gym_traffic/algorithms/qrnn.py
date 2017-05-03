@@ -130,12 +130,12 @@ def train_model(sess, dbg, writer, save, env):
       for (t,s,a,r,s1,d) in epoch(sess, env, "main/explore:0"):
         sess.run("add_experience", feed_dict={'a:0':a,'s:0':s,'r:0':r,'nd:0': not d})
         if episode_num >= FLAGS.buffer_size - 1 and (t % FLAGS.train_rate) == 0:
-          if t % FLAGS.summary_rate == 0:
+          if step % FLAGS.summary_rate == 0:
             _,smry = sess.run(["train", "desc/desc:0"], fd)
-            step = sess.run("global_step:0")
             writer.add_summary(smry, global_step=step)
           else:
             sess.run("train", feed_dict=fd)
+          step = sess.run("global_step:0")
           sess.run("update_chooser")
           if step % FLAGS.target_update_rate == 0:
             sess.run("update_target")

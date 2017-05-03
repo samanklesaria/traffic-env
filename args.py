@@ -18,6 +18,8 @@ def parse_flags():
   apply_derivations(PARSER)
 
 def add_argument(name, default, **kwargs):
+  if 'type' in kwargs and kwargs['type'] is bool:
+    kwargs.update(nargs='?', const=True)
   PARSER.add_argument(name, **kwargs)
   PARSER.defaults[name.replace('-','')] = default
 

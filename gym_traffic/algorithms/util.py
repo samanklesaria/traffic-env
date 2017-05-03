@@ -5,7 +5,7 @@ import os
 from functools import partial
 from util import *
 import json
-from args import PARSER, FLAGS, add_derivation
+from args import PARSER, FLAGS, add_derivation, add_argument
 from numba import jit, void, float32, boolean
 EPS = 1e-8
 
@@ -80,7 +80,7 @@ def exploration_param():
 
 def softmax_decision(scores, eps):
   tf.summary.histogram("scores", scores)
-  greedy = tf.cast(tf.argmax(scores, axis=-1, name="greedy"), tf.int32)
+  greedy = tf.cast(tf.argmax(scores, axis=-1), tf.int32, name="greedy")
   if FLAGS.exploration == "boltzman":
     heated_scores = scores / eps
     entropy(tf.nn.softmax(scores))

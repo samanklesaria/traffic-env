@@ -69,9 +69,9 @@ def model(env):
   sigmoid_decision(score, eps)
   actions = tf.placeholder(tf.float32, [None, env.action_space.size], name="actions")
   rewards = tf.placeholder(tf.float32, [None, env.action_space.size], name="rewards")
-  loss = tf.reduce_sum(rewards *
+  loss = tf.reduce_mean(tf.reduce_sum(rewards *
     tf.nn.sigmoid_cross_entropy_with_logits(logits=score, labels=actions,
-      name="cross_entropy"), name="policy_loss")
+      name="cross_entropy"), axis=1), name="policy_loss")
   tf.summary.scalar("loss", loss)
   opt = tf.train.AdamOptimizer(learning_rate=FLAGS.learning_rate) 
   grads = [(tf.Variable(tf.zeros(v.get_shape()), trainable=False), g, v)
