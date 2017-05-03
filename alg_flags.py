@@ -3,8 +3,9 @@ from args import add_argument, add_derivation, FLAGS, PARSER
 
 add_argument('--restore', False, type=bool)
 add_argument('--grad_summary', False, type=bool)
-add_argument('--print_discounted', False, type=bool)
+add_argument('--print_discounted', True, type=bool)
 add_argument('--use_avg', False, type=bool)
+add_argument('--print_avg', False, type=bool)
 add_argument('--render', False, type=bool)
 add_argument('--episode_len', 800, type=int)
 add_argument('--save_rate', 1000, type=int)
@@ -36,6 +37,7 @@ add_argument('--total_episodes', None, type=int)
 
 def std_derivations():
   if FLAGS.render: FLAGS.mode = 'validate'
+  if FLAGS.use_avg: FLAGS.print_avg = True
 add_derivation(std_derivations)
 
 def run_alg(env_f):

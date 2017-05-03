@@ -25,7 +25,7 @@ def episode_reward(gen):
   for (i,_,_,r,*_) in gen:
     reward += np.mean(r) * (multiplier if FLAGS.print_discounted else 1)
     multiplier *= FLAGS.gamma
-  if not FLAGS.use_avg:
+  if not FLAGS.print_avg:
     denom = 1
   elif FLAGS.gamma == 1:
     denom = i+1
