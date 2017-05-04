@@ -1,5 +1,5 @@
 import importlib
-from args import add_argument, add_derivation, FLAGS, PARSER
+from args import add_argument, add_derivation, FLAGS, PARSER, apply_derivations
 
 add_argument('--restore', False, type=bool)
 add_argument('--grad_summary', False, type=bool)
@@ -41,4 +41,6 @@ def std_derivations():
 add_derivation(std_derivations)
 
 def run_alg(env_f):
-  importlib.import_module("gym_traffic.algorithms."+FLAGS.trainer).run(env_f)
+  mod = importlib.import_module("gym_traffic.algorithms."+FLAGS.trainer)
+  apply_derivations(PARSER) 
+  mod.run(env_f)
