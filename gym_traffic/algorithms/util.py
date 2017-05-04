@@ -17,7 +17,7 @@ def entropy(probs):
 def anneal(varname, start, end):
   var = tf.Variable(start, dtype=tf.float32,name=varname,trainable=False)
   tf.assign(var, tf.maximum(end, var -
-    ((start - end) / FLAGS.annealing_episodes)), name=("dec_" + varname))
+    ((start - end) / FLAGS.annealing_episodes)), name=("dec_eps"))
   tf.summary.scalar(varname+"_val", var)
   return var
 
@@ -84,8 +84,9 @@ def softmax_decision(scores, eps):
   if FLAGS.exploration == "boltzman":
     heated_scores = scores / eps
     entropy(tf.nn.softmax(scores))
-    tf.map_fn(lambda r: tf.squeeze(tf.multinomial(r, 1), 1),
-        heated_scores, back_prop=False, name="explore")
+    tf.identity(tf.map_fn(lambda r: tf.squeeze(
+      tf.cast(tf.multinomial(r, 1), tf.int32), 1),
+      heated_scores, dtype=tf.int32, back_prop=False), name="explore")
   elif FLAGS.exploration == "e_greedy":
     score_shape = tf.shape(scores)
     num_actions = score_shape[-1]
