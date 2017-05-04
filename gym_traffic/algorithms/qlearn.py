@@ -7,17 +7,16 @@ add_argument('--beta', 0.001, type=float)
 
 def qlearn_derivations():
   if FLAGS.trainer == 'qlearn':
-    FLAGS.history = 6
-    # How does r learning work when you use a gamma?
-    # I don't think it does, but could be interesting to investigate
+    FLAGS.history = 10
     if FLAGS.use_avg: FLAGS.gamma = 1
 add_derivation(qlearn_derivations)
 
 def build_net(env, temp, observations):
   reshaped = tf.reshape(observations, [-1, env.observation_space.size])
-  h0 = tf.layers.dense(reshaped, 100, tf.nn.relu)
-  h1 = tf.layers.dense(h0, 100, tf.nn.relu)
-  flat_qval = tf.layers.dense(h1, env.action_space.size * 2, name="qout")
+  h0 = tf.layers.dense(reshaped, 200, tf.nn.relu)
+  h1 = tf.layers.dense(h0, 200, tf.nn.relu)
+  h2 = tf.layers.dense(h1, 200, tf.nn.relu)
+  flat_qval = tf.layers.dense(h2, env.action_space.size * 2, name="qout")
   qvals = tf.reshape(flat_qval, (-1, env.action_space.size, 2), name="qvals")
   softmax_decision(qvals, temp)
 
