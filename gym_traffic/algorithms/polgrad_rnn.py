@@ -14,11 +14,12 @@ def epoch(sess, env, cmd):
     yield (t,obs,y[0].astype(np.float32),reward)
     if done: break
 
-def train(sess, dbg, writer, save, env):
+def train(sess, dbg, writer, save, save_best, env):
   xs = np.empty((FLAGS.episode_len, *env.observation_space.shape), dtype=np.float32)
   rs = np.empty((FLAGS.episode_len, env.action_space.size), dtype=np.float32)
   ys = np.empty((FLAGS.episode_len, env.action_space.size), dtype=np.float32)
   episode_num = sess.run("episode_num:0")
+  best_threshold = FLAGS.best_threshold
   try:
     while FLAGS.total_episodes is None or episode_num < FLAGS.total_episodes:
       episode_num = sess.run("episode_num:0")
@@ -45,6 +46,10 @@ def train(sess, dbg, writer, save, env):
         print("Reward", rew)
         s = sess.run("avg_r_summary:0", feed_dict={"avg_r:0":rew})
         writer.add_summary(s, episode_num)
+        if best_threshold < rew:
+          save_best(global_step=step)
+          best_threshold = rew
+      if episode_num % FLAGS.save_rate == 0:
       if episode_num % FLAGS.save_rate == 0:
         save(global_step=episode_num)
       sess.run("dec_eps")

@@ -63,7 +63,7 @@ def epoch(scope, sess, env, cmd, extra_ops=[]):
     if done: break
 
 # Run A3C training method
-def train_model(env_f, sess, dbg, writer, save, master_env):
+def train_model(env_f, sess, dbg, writer, save, save_best, master_env):
   ev = threading.Event()
   coord = tf.train.Coordinator()
   envs = [env_f() for _ in range(FLAGS.threads)]
@@ -71,6 +71,7 @@ def train_model(env_f, sess, dbg, writer, save, master_env):
       for (i,e) in enumerate(envs)]
   for t in threads: t.start()
   episode_num = sess.run("global/episode_num:0")
+  best_threshold = FLAGS.best_threshold
   try:
     while FLAGS.total_episodes is None or episode_num < FLAGS.total_episodes:
       episode_num = sess.run("global/episode_num:0")
@@ -81,6 +82,10 @@ def train_model(env_f, sess, dbg, writer, save, master_env):
         print("Reward", rew)
         s = sess.run("avg_r_summary:0", feed_dict={"avg_r:0":rew})
         writer.add_summary(s, episode_num)
+        if best_threshold < rew:
+          save_best(global_step=step)
+          best_threshold = rew
+      if episode_num % FLAGS.save_rate == 0:
       if (episode_num % FLAGS.save_rate) == 0:
         save(global_step=episode_num)
       ev.clear()

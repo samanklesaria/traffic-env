@@ -104,10 +104,11 @@ def epoch(sess, env, cmd):
     if done: break
     obs = new_obs
 
-def train_model(sess, dbg, writer, save, env):
+def train_model(sess, dbg, writer, save, save_best, env):
   episode_num, step = sess.run(["episode_num:0", "global_step:0"])
   sess.run("update_chooser")
   sess.run("update_target")
+  best_threshold = FLAGS.best_threshold
   try:
     while FLAGS.total_episodes is None or episode_num < FLAGS.total_episodes:
       episode_num = sess.run("episode_num:0")
@@ -131,6 +132,9 @@ def train_model(sess, dbg, writer, save, env):
         print("Reward", rew)
         smry = sess.run("avg_r_summary:0", feed_dict={"avg_r:0":rew})
         writer.add_summary(smry, episode_num)
+        if best_threshold < rew:
+          save_best(global_step=step)
+          best_threshold = rew
       if episode_num % FLAGS.save_rate == 0:
         save(global_step=step)
   finally:

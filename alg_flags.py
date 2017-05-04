@@ -34,6 +34,7 @@ add_argument('--lam', 1, type=float)
 add_argument('--debug', False, type=bool)
 add_argument('--train_rate', 1, type=int)
 add_argument('--total_episodes', None, type=int)
+add_argument('--best_threshold', 30.0, type=float)
 
 def std_derivations():
   if FLAGS.render: FLAGS.mode = 'validate'

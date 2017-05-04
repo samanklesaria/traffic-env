@@ -2,9 +2,6 @@ import tensorflow as tf
 import tensorflow.contrib.rnn as rnn
 from gym_traffic.algorithms.util import *
 
-# max-predicted q is only useful in comparison to discounted rewards.
-# We should record both averages and discounted returns
-
 def build_net(env, temp, n_ep, n_exp, observations, lens):
   reshape0 = tf.reshape(observations, [-1, env.observation_space.size]) 
   pre_gru = tf.reshape(tf.layers.dense(reshape0, 180, tf.nn.relu),
@@ -119,11 +116,12 @@ def epoch(sess, env, cmd):
     if done: break
     obs = new_obs
 
-def train_model(sess, dbg, writer, save, env):
+def train_model(sess, dbg, writer, save, save_best, env):
   episode_num, step = sess.run(["episode_num:0", "global_step:0"])
   fd = {'n_exp:0': FLAGS.trace_size, 'n_ep:0': FLAGS.batch_size}
   sess.run("update_chooser")
   sess.run("update_target")
+  best_threshold = FLAGS.best_threshold
   try:
     while FLAGS.total_episodes is None or episode_num < FLAGS.total_episodes:
       episode_num = sess.run("episode_num:0")
@@ -146,6 +144,10 @@ def train_model(sess, dbg, writer, save, env):
         print("Reward", rew)
         smry = sess.run("avg_r_summary:0", feed_dict={"avg_r:0":rew})
         writer.add_summary(smry, global_step=step)
+        if best_threshold < rew:
+          save_best(global_step=step)
+          best_threshold = rew
+      if episode_num % FLAGS.save_rate == 0:
       if episode_num % FLAGS.save_rate == 0:
         save(global_step=step)
   finally:
