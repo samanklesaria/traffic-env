@@ -8,6 +8,9 @@ from args import parse_flags, add_argument, add_derivation, FLAGS
 from alg_flags import run_alg
 from gym_traffic.wrappers.history import HistoryWrapper
 
+# For action distributions, we should just take the the count of 0s, count of 1s,
+# show the dist each episode
+
 add_argument('--episode_secs', 600, type=int)
 add_argument('--light_secs', 5, type=int)
 add_argument('--warmup_lights', 0, type=int)
@@ -39,7 +42,7 @@ def Repeater(repeat_count):
         light_dist = (self.env.elapsed + 1) * change.astype(np.int32)
         light_dist_secs = light_dist.astype(np.float32) / 2
         change_times = light_dist_secs[np.nonzero(light_dist_secs)]
-        info = {'light_times': change_times}
+        info = {'light_times': change_times, 'action': action}
       else: info = None
       for _ in range(repeat_count):
         obs, reward, done, _ = self.env.step(action)
