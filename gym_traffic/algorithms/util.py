@@ -38,11 +38,10 @@ def handle_modes(env_f, model, val, train):
     if FLAGS.restore:
       with open(os.path.join(FLAGS.logdir, "settings.json"),'r') as f:
         PARSER.defaults.update(json.load(f))
+      env = env_f()
       latest = tf.train.latest_checkpoint(FLAGS.logdir)
       tf.train.import_meta_graph(latest + '.meta').restore(sess, latest)
-    else:
-      env = env_f()
-      sess.run(init)
+    else: sess.run(init)
     if FLAGS.mode == "validate":
       print_running_stats(forever(lambda: val(sess, env)))
     elif FLAGS.mode == "train":
