@@ -241,6 +241,7 @@ class TrafficEnv(gym.Env):
     self.passed_dst[:] = False
     self.current_phase[:] = self.action_space.sample()
     self.passed[:] = 0
+    self.waiting[:] = 0
     return self.obs
 
   def add_new_cars(self, tick):
