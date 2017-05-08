@@ -14,9 +14,11 @@ add_derivation(qlearn_derivations)
 def build_net(env, temp, observations):
   reshaped = tf.reshape(observations, [-1, env.observation_space.size])
   h0 = tf.layers.dense(reshaped, 200, tf.nn.relu)
-  h1 = tf.layers.dense(h0, 200, tf.nn.relu)
+  h1 = tf.layers.dense(h0, 220, tf.nn.relu)
   h2 = tf.layers.dense(h1, 200, tf.nn.relu)
-  flat_qval = tf.layers.dense(h2, env.action_space.size * 2, name="qout")
+  resid = tf.layers.dense(h2, 200)
+  h3 = tf.nn.relu(h2 + resid)
+  flat_qval = tf.layers.dense(h3, env.action_space.size * 2, name="qout")
   qvals = tf.reshape(flat_qval, (-1, env.action_space.size, 2), name="qvals")
   softmax_decision(qvals, temp)
 

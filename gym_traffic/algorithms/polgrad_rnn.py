@@ -50,7 +50,6 @@ def train(sess, dbg, writer, save, save_best, env):
           save_best(global_step=step)
           best_threshold = rew
       if episode_num % FLAGS.save_rate == 0:
-      if episode_num % FLAGS.save_rate == 0:
         save(global_step=episode_num)
       sess.run("dec_eps")
   finally:
@@ -62,15 +61,16 @@ def model(env):
   eps = exploration_param()
   observations = tf.placeholder(tf.float32, [None,*env.observation_space.shape], name="observations")
   reshape0 = tf.reshape(observations, [-1, env.observation_space.size]) 
-  pre_gru = tf.layers.dense(reshape0, 30, tf.nn.relu, name="pre_gru_layer")
-  gru = rnn.GRUCell(30)
+  pre_gru = tf.layers.dense(reshape0, 200, tf.nn.relu, name="pre_gru_layer")
+  gru = rnn.GRUCell(250)
   state_in = tf.identity(gru.zero_state(1, tf.float32), name="state_in")
   rnn_out, state_out = tf.nn.dynamic_rnn(gru,
     tf.expand_dims(pre_gru, 0), initial_state=state_in, dtype=tf.float32)
   tf.identity(state_out, name="state_out")
   mid = tf.squeeze(rnn_out, 0, name="mid")
-  h0 = tf.layers.dense(mid, 30, tf.nn.relu, name="hidden_layer")
-  score = tf.layers.dense(h0, env.action_space.size, name="score_layer")
+  h0 = tf.layers.dense(mid, 200, tf.nn.relu, name="hidden_layer")
+  h1 = tf.layers.dense(h0, 200, tf.nn.relu, name="middle_layer")
+  score = tf.layers.dense(h1, env.action_space.size, name="score_layer")
   sigmoid_decision(score, eps)
   actions = tf.placeholder(tf.float32, [None, env.action_space.size], name="actions")
   rewards = tf.placeholder(tf.float32, [None, env.action_space.size], name="rewards")
