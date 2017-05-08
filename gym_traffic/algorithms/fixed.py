@@ -15,7 +15,7 @@ def run(env_f):
     obs = env.reset()
     for i in range(FLAGS.episode_len):
       a = actions[phase(i)]
-      obs, reward, done, _ = env.step(a)
-      yield i,obs,a,reward
+      obs, reward, done, info = env.step(a)
+      yield i,obs,a,reward,info
       if done: break
   print_running_stats(forever(lambda: episode_reward(episode())))

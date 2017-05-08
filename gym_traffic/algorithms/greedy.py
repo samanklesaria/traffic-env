@@ -14,7 +14,7 @@ def run(env_f):
       obs = env.unwrapped.cars_on_roads()
       if i % FLAGS.spacing == 0:
         action = env.action_space.to_action(obs.dot([1,1,-1,-1]) < 0)
-      obs, reward, done, _ = env.step(action)
-      yield i,obs,action,reward
+      obs, reward, done, info = env.step(action)
+      yield i,obs,action,reward,info
       if done: break
   print_running_stats(forever(lambda: episode_reward(episode())))

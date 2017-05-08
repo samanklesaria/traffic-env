@@ -205,7 +205,7 @@ class TrafficEnv(gym.Env):
     if FLAGS.learn_switch:
       change = action
       self.current_phase[:] = np.logical_xor(self.current_phase, action) 
-    else: 
+    else:
       change = np.logical_xor(self.current_phase, action).astype(np.int32) 
       self.current_phase[:] = action
     self.elapsed += 1 

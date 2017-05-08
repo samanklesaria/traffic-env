@@ -6,15 +6,10 @@ from args import FLAGS
 def run(env_f):
   env = env_f()
   ones = np.ones(env.action_space.shape)
-  def rewards():
-    while True:
-      reward_sum = 0
-      multiplier = 1
-      obs = env.reset()
-      for _ in range(FLAGS.episode_len):
-        obs, reward, done, _ = env.step(ones)
-        reward_sum += np.mean(reward) * (multiplier if FLAGS.print_discounted else 1)
-        multiplier *= FLAGS.gamma
-        if done: break
-      yield reward_sum
-  print_running_stats(rewards())
+  def episode():
+    env.reset()
+    for i in range(FLAGS.episode_len):
+      o,r,d,info = env.step(ones)
+      yield i,o,ones,r,info
+      if d: break
+  print_running_stats(forever(lambda: episode_reward(episode())))

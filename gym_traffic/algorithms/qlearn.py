@@ -1,8 +1,6 @@
 import tensorflow as tf
 from gym_traffic.algorithms.util import *
 
-# Track maxQ and overall Q distributions. Ensure they converge to something reasonable.
-
 add_argument('--beta', 0.001, type=float)
 
 def qlearn_derivations():
