@@ -21,6 +21,6 @@ def HistoryWrapper(history_count):
       self.history.append(self.env.reset())
       for _ in range(self.history_count - 1):
         self.history.append(self.env.step(self.env.action_space.sample())[0])
-      return np.array(self.history)
+      return np.stack(self.history)
     
   return HistoryWrapper

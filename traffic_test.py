@@ -33,6 +33,9 @@ def Repeater(repeat_count):
       self.r = self.unwrapped.graph.train_roads
       self.i = self.unwrapped.graph.intersections
       self.observation_space = GSpace([2*self.r+self.i], np.float32(1))
+    def _reset(self):
+      super(Repeater, self)._reset()
+      return self._step(self.action_space.sample())[0]
     def _step(self, action):
       done = False
       total_reward = 0

@@ -128,7 +128,7 @@ def train_model(sess, dbg, writer, save, save_best, env):
       sess.run("incr_episode")
       sess.run("dec_eps")
       if episode_num % FLAGS.validate_rate == 0:
-        rew = validate(sess, env)
+        rew = validate(sess, env)[0]
         print("Reward", rew)
         smry = sess.run("avg_r_summary:0", feed_dict={"avg_r:0":rew})
         writer.add_summary(smry, episode_num)
