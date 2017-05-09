@@ -99,8 +99,8 @@ def epoch(sess, env, cmd):
   obs = env.reset()
   for t in range(FLAGS.episode_len):
     a, = sess.run(cmd, {'batch/obs:0':[obs], 'batch/n:0':1})
-    new_obs, reward, done, _ = env.step(a)
-    yield t,obs,a,reward,new_obs,done
+    new_obs, reward, done, info = env.step(a)
+    yield t,obs,a,reward,info,new_obs,done
     if done: break
     obs = new_obs
 
@@ -112,7 +112,7 @@ def train_model(sess, dbg, writer, save, save_best, env):
   try:
     while FLAGS.total_episodes is None or episode_num < FLAGS.total_episodes:
       episode_num = sess.run("episode_num:0")
-      for (t,s,a,r,s1,d) in epoch(sess, env, "main/explore:0"):
+      for (t,s,a,r,_,s1,d) in epoch(sess, env, "main/explore:0"):
         ix = sess.run("replay/exp_idx:0")
         sess.run("add_experience", feed_dict={'a:0':a,'s:0':s,'s1:0':s1,'r:0':r,'d:0':d})
         if ix >= FLAGS.buffer_size and (ix % FLAGS.train_rate) == 0:

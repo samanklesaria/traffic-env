@@ -42,7 +42,7 @@ def Repeater(repeat_count):
         light_dist = (self.env.elapsed + 1) * change.astype(np.int32)
         light_dist_secs = light_dist.astype(np.float32) / 2
         change_times = light_dist_secs[np.nonzero(light_dist_secs)]
-        info = {'light_times': change_times, 'action': action}
+        info = {'light_times': change_times, 'action': action, 'trip_times': self.env.trip_times}
       else: info = None
       for _ in range(repeat_count):
         obs, reward, done, _ = self.env.step(action)

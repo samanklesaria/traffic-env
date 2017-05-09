@@ -93,9 +93,9 @@ def update_lights(dests,phases,length,nexts,state,leading,lastcar,current_phase,
         state[e, xi, leading[e]] = np.inf
 
 # Add a new car to a road
-@jit(boolean(int32,float32[:],float32[:,:,:],int32[:],int32[:],float32,
+@jit(boolean(int32,float32[:],float32[:,:,:],int32[:],int32[:],
   float32[:],int32[:]),nopython=True,nogil=True,cache=True)
-def add_car(road,car,state,leading,lastcar,tick,rewards,dests):
+def add_car(road,car,state,leading,lastcar,rewards,dests):
   pos = wrap(lastcar[road] + 1)
   start_pos = np.inf
   if lastcar[road] != leading[road]:
@@ -103,7 +103,6 @@ def add_car(road,car,state,leading,lastcar,tick,rewards,dests):
         - state[road,s0i,lastcar[road]]
   if pos != leading[road]:
     state[road,:,pos] = car
-    state[road,wi,pos] = tick
     state[road,xi,pos] = min(state[road,xi,pos], start_pos)
     lastcar[road] = pos
   elif dests[road] >= 0:
@@ -115,9 +114,9 @@ def add_car(road,car,state,leading,lastcar,tick,rewards,dests):
 
 # Remove cars with x coordinates beyond their roads' lengths
 @jit(boolean(int32[:],float32,int32[:],float32[:,:,:],int32[:],int32[:],int32[:],float32[:],
-  boolean[:],float32),nopython=True,nogil=True,cache=True)
+  boolean[:]),nopython=True,nogil=True,cache=True)
 def advance_finished_cars(dests,length,nexts,state,leading,lastcar,passed,
-    rewards,passed_dst,tick):
+    rewards,passed_dst):
   overflowed = False
   for e in range(nexts.shape[0]):
     while leading[e] != lastcar[e] and state[e,xi,wrap(leading[e]+1)] > length:
@@ -129,7 +128,29 @@ def advance_finished_cars(dests,length,nexts,state,leading,lastcar,passed,
         rewards[dests[e]] += PASSING_REWARD
         state[e,xi,newlead] -= length
         overflowed = add_car(newrd,state[e,:,newlead],state,
-            leading,lastcar,tick,rewards,dests) or overflowed
+            leading,lastcar,rewards,dests) or overflowed
+      state[e,:,newlead] = state[e,:,leading[e]]
+      leading[e] = newlead
+  return overflowed
+
+# Remove cars with x coordinates beyond their roads' lengths, adding these cars'
+# travel times to a list if they go off the map
+def advance_hack(dests,length,nexts,state,leading,lastcar,passed,
+    rewards,passed_dst, trip_times, tick):
+  overflowed = False
+  for e in range(nexts.shape[0]):
+    while leading[e] != lastcar[e] and state[e,xi,wrap(leading[e]+1)] > length:
+      newlead = wrap(leading[e]+1)
+      newrd = nexts[e]
+      if newrd >= 0:
+        passed[e] += 1
+        passed_dst[dests[e]] = True
+        rewards[dests[e]] += PASSING_REWARD
+        state[e,xi,newlead] -= length
+        overflowed = add_car(newrd,state[e,:,newlead],state,
+            leading,lastcar,rewards,dests) or overflowed
+      else:
+        trip_times.append((tick - state[e,wi,newlead]) / 2)
       state[e,:,newlead] = state[e,:,leading[e]]
       leading[e] = newlead
   return overflowed
@@ -162,11 +183,11 @@ def inv_popcount(inv_i):
   i = (i & 0x33333333) + ((i >> 2) & 0x33333333)
   return (((i + (i >> 4) & 0xF0F0F0F) * 0x1010101) & 0xffffffff) >> 24
 
-@jit(boolean(int32[:],int32[:],float32,int32[:],float32[:,:,:],int32[:],int32[:],
-  float32,int32[:],int32[:],int32[:],float32[:],boolean[:],int32[:],int32[:],float32),
+@jit(void(int32[:],int32[:],float32,int32[:],float32[:,:,:],int32[:],int32[:],
+  float32,int32[:],int32[:],float32[:],int32[:],int32[:]),
   nopython=True,nogil=True,cache=True)
 def move_cars(dests,phases,length,nexts,state,leading,lastcar,rate,current_phase,elapsed,
-    passed,rewards,passed_dst,waiting,detected,tick):
+    rewards,waiting,detected):
   update_lights(dests,phases,length,nexts,state,leading,lastcar,current_phase,elapsed)
   for e in range(leading.shape[0]):
     if leading[e] == lastcar[e]: continue
@@ -188,8 +209,6 @@ def move_cars(dests,phases,length,nexts,state,leading,lastcar,rate,current_phase
         waiting[e] += np.sum((state[e,xi,1:lastcar[e]+1] > THRESH).astype(np.int32))
         detected[e] = np.sum((state[e,xi,leading[e]+1:] > (length - 10)).astype(np.int32))
         detected[e] += np.sum((state[e,xi,1:lastcar[e]+1:] > (length - 10)).astype(np.int32))
-  return advance_finished_cars(dests,length,nexts,state,leading,lastcar,passed,
-      rewards,passed_dst,tick)
 
 @jit(int32[:](int32[:],int32[:]),nopython=True,nogil=True,cache=True)
 def cars_on_roads(leading, lastcar):
@@ -213,10 +232,17 @@ class TrafficEnv(gym.Env):
     self.rewards[:] = 0
     self.passed[:] = 0
     overflowed = self.add_new_cars(self.steps)
-    overflowed = move_cars(self.graph.dest, self.graph.phases, self.graph.len,
+    move_cars(self.graph.dest, self.graph.phases, self.graph.len,
         self.graph.nexts, self.state, self.leading, self.lastcar, FLAGS.rate,
-        self.current_phase, self.elapsed, self.passed, self.rewards,
-        self.passed_dst, self.waiting, self.detected, self.steps) or overflowed
+        self.current_phase, self.elapsed, self.rewards,
+        self.waiting, self.detected)
+    if FLAGS.mode == 'validate':
+      adv = advance_hack(self.graph.dest, self.graph.len, self.graph.nexts, self.state,
+        self.leading,self.lastcar,self.passed,self.rewards,self.passed_dst,self.trip_times, self.steps)
+    else:
+      adv = advance_finished_cars(self.graph.dest, self.graph.len, self.graph.nexts, self.state,
+        self.leading,self.lastcar,self.passed,self.rewards,self.passed_dst)
+    overflowed = adv or overflowed
     self.steps += 1
     return self.obs, self.rewards, overflowed, None
 
@@ -249,9 +275,9 @@ class TrafficEnv(gym.Env):
     car = next(self.rand_car)
     while car is not None:
       self.generated_cars += 1
+      car[wi] = tick
       overflowed = add_car(self.rand.choice(self.graph.entrypoints),car,self.state,
-        self.leading,self.lastcar,np.float32(tick),
-        self.rewards,self.graph.dest) or overflowed
+        self.leading,self.lastcar,self.rewards,self.graph.dest) or overflowed
       car = next(self.rand_car)
     return overflowed
 
@@ -351,6 +377,7 @@ class TrafficEnv(gym.Env):
     self.rewards = np.empty(i, dtype=np.float32)
     self.reward_size = self.rewards.size
     self.passed_dst = np.zeros(i,dtype=np.bool8)
+    self.trip_times = []
     self.reset_entrypoints()
 
   def remi_reward(self):
