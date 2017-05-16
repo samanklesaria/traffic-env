@@ -26,23 +26,32 @@ def print_running_stats(iterator):
       if info:
         print("One prob: %2f,\t Zero prob: %2f" % (info['onep'], info['zerop']))
         trip_times.extend(info['trip_times'])
-  finally:
-    if FLAGS.mode == 'validate':
-      print("Writing histograms")
-      plt.hist(light_times, color='c')
-      light_time_mean = np.mean(light_times)
-      plt.axvline(light_time_mean, color='b', linestyle='dashed',linewidth=2)
-      plt.figtext(0.02, 0.02, "Mean %2f, std %2f" % (light_time_mean, np.std(light_times)))
-      plt.savefig('light_times.png')
-      plt.clf()
-      plt.hist(trip_times, color='c')
-      trip_time_mean = np.mean(trip_times)
-      plt.axvline(trip_time_mean, color='b', linestyle='dashed', linewidth=2)
-      plt.figtext(0.02, 0.02, "Mean %2f, std %2f" % (trip_time_mean, np.std(trip_times)))
-      plt.savefig('trip_times.png')
-      np.save("light_times.npy", light_times)
-      np.save("trip_times.npy", trip_times)
+  except KeyboardInterrupt:
+    print("Interrupted")
+    return (light_times, trip_times)
 
+def make_subplot(ax, data):
+  ax.hist(data, color='c')
+  ax.axvline(np.mean(data), color='b', linestyle='dashed',linewidth=2)
+
+def make_plot(light_times, trip_times):
+  fig = plt.figure()
+  fig.suptitle("Stats for " + FLAGS.trainer, fontweight='bold', fontsize=14)
+  fig.subplots_adjust(hspace=0.5)
+  ax = fig.add_subplot(211)
+  ax.set_title("Light Times")
+  make_subplot(ax, light_times)
+  ax = fig.add_subplot(212)
+  ax.set_title("Trip Times")
+  make_subplot(ax, trip_times)
+
+def write_data(light_times, trip_times):
+  make_plot(light_times, trip_times)
+  plt.savefig('hist.png')
+  np.save("light_times.npy", light_times)
+  np.save("trip_times.npy", trip_times)
+
+# TODO- light_times shouldn't be global. Throws off notebook analysis
 def episode_reward(gen):
   num_0s = 0
   num_1s = 0

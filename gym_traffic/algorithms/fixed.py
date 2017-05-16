@@ -18,4 +18,6 @@ def run(env_f):
       obs, reward, done, info = env.step(a)
       yield i,obs,a,reward,info
       if done: break
-  print_running_stats(forever(lambda: episode_reward(episode())))
+  data = print_running_stats(forever(lambda: episode_reward(episode())))
+  if FLAGS.interactive: return data
+  write_data(*data)

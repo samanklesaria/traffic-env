@@ -144,4 +144,4 @@ def validate(sess, env):
   return episode_reward(epoch(sess, env, "main/greedy:0"))
 
 def run(env_f):
-  handle_modes(env_f, model, validate, train_model)
+  return handle_modes(env_f, model, validate, train_model)

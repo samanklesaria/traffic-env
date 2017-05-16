@@ -43,7 +43,9 @@ def handle_modes(env_f, model, val, train):
       tf.train.import_meta_graph(latest + '.meta').restore(sess, latest)
     else: sess.run(init)
     if FLAGS.mode == "validate":
-      print_running_stats(forever(lambda: val(sess, env)))
+      data = print_running_stats(forever(lambda: val(sess, env)))
+      if FLAGS.interactive: return data
+      write_data(*data)
     elif FLAGS.mode == "train":
       if FLAGS.restore: summary_writer = tf.summary.FileWriter(FLAGS.logdir)
       else: summary_writer = tf.summary.FileWriter(FLAGS.logdir, tf.get_default_graph())
