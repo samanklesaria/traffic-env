@@ -3,6 +3,7 @@ import math
 import numpy as np
 from args import FLAGS
 import matplotlib.pyplot as plt
+import scipy.stats as stats
 
 def square(x): return x*x
 
@@ -50,6 +51,12 @@ def write_data(light_times, trip_times):
   plt.savefig('hist.png')
   np.save("light_times.npy", light_times)
   np.save("trip_times.npy", trip_times)
+
+def display_data(light_times, trip_times):
+  make_plot(light_times, trip_times)
+  plt.show()
+  print("Light times mean %2f, mode %2f, std %2f" % (np.mean(light_times), stats.mode(light_times, axis=None).mode, np.std(light_times)))
+  print("Trip times mean %2f, mode %2f, std %2f" % (np.mean(trip_times), stats.mode(trip_times, axis=None).mode, np.std(trip_times)))
 
 def episode_reward(gen):
   num_0s = 0
