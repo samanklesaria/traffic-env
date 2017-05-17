@@ -14,7 +14,7 @@ add_argument('--poisson',True, type=bool)
 add_argument('--entry', 'all')
 add_argument('--learn_switch', False, type=bool)
 
-THRESH = 0.1
+THRESH = 0.2
 
 # Python attribute access is expensive. We hardcode these params
 PASSING_REWARD = 0
@@ -75,6 +75,7 @@ def remi(dests,phases,current_phase,rewards,passed_dst,waiting):
     elif passed_dst[dst] and green and not (waiting[e] > 0):
       rewards[dst] += 0.5
   passed_dst[:] = False
+  waiting[:] = 0
 
 # Update the leading car at the end of each road depending on light phases
 @jit(void(int32[:],int32[:],float32,int32[:],float32[:,:,:],int32[:],int32[:],int32[:],int32[:]),
@@ -196,7 +197,7 @@ def move_cars(dests,phases,length,nexts,state,leading,lastcar,rate,current_phase
       if DECEL_PENALTY and dests[e] >= 0:
         rewards[dests[e]] += np.sum((dv < 0)) / 10
       if dests[e] >= 0:
-        waiting[e] = np.sum((state[e,vi,leading[e]+1:lastcar[e]+1] < THRESH).astype(np.int32))
+        waiting[e] += np.sum((state[e,vi,leading[e]+1:lastcar[e]+1] < THRESH).astype(np.int32))
         detected[e] = np.sum((state[e,xi,leading[e]+1:lastcar[e]+1] > (length - 10)).astype(np.int32))
     else:
       state[e,:,0] = state[e,:,-1]
@@ -205,8 +206,8 @@ def move_cars(dests,phases,length,nexts,state,leading,lastcar,rate,current_phase
       if DECEL_PENALTY and dests[e] >= 0:
         rewards[dests[e]] += (np.sum(dv < 0) + np.sum(dv2 < 0)) / 10
       if dests[e] >= 0:
-        waiting[e] = np.sum((state[e,vi,leading[e]+1:] < THRESH).astype(np.int32))
-        waiting[e] += np.sum((state[e,xi,1:lastcar[e]+1] > THRESH).astype(np.int32))
+        waiting[e] += np.sum((state[e,vi,leading[e]+1:] < THRESH).astype(np.int32))
+        waiting[e] += np.sum((state[e,xi,1:lastcar[e]+1] < THRESH).astype(np.int32))
         detected[e] = np.sum((state[e,xi,leading[e]+1:] > (length - 10)).astype(np.int32))
         detected[e] += np.sum((state[e,xi,1:lastcar[e]+1:] > (length - 10)).astype(np.int32))
 

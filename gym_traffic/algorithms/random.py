@@ -11,6 +11,7 @@ def run(env_f):
     for i in range(FLAGS.episode_len):
       a = env.action_space.sample()
       obs, reward, done, info = env.step(a)
+      if FLAGS.render: print("REWARD", reward)
       yield i,obs,a,reward,info
       if done: break
   data = print_running_stats(forever(lambda: episode_reward(env, episode())))
