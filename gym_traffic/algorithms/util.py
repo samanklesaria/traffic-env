@@ -85,6 +85,7 @@ def softmax_decision(scores, eps):
   tf.summary.histogram("scores", scores)
   greedy = tf.cast(tf.argmax(scores, axis=-1), tf.int32, name="greedy")
   if FLAGS.exploration == "boltzman":
+    # THIS DOESN'T WORK!!
     heated_scores = scores / eps
     entropy(tf.nn.softmax(scores))
     tf.identity(tf.map_fn(lambda r: tf.squeeze(
