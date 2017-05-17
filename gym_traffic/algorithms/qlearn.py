@@ -141,7 +141,7 @@ def train_model(sess, dbg, writer, save, save_best, env):
     if step is not None: save(global_step=step)
 
 def validate(sess, env):
-  return episode_reward(epoch(sess, env, "main/greedy:0"))
+  return episode_reward(env, epoch(sess, env, "main/greedy:0"))
 
 def run(env_f):
   return handle_modes(env_f, model, validate, train_model)

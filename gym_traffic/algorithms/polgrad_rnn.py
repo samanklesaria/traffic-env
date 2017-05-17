@@ -87,7 +87,7 @@ def model(env):
   tf.identity(tf.summary.merge_all(), name="summaries")
 
 def validate(sess, env):
-  return episode_reward(epoch(sess, env, "greedy:0"))
+  return episode_reward(env, epoch(sess, env, "greedy:0"))
 
 def run(env_f):
   handle_modes(env_f, model, validate, train)

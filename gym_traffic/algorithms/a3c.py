@@ -143,7 +143,7 @@ def model(env):
   for i in range(FLAGS.threads): build_net(env, opt, eps, "w"+str(i)) 
 
 def validate(sess, env):
-  return episode_reward(epoch("global", sess, env, "greedy:0"))
+  return episode_reward(env, epoch("global", sess, env, "greedy:0"))
 
 def run(env_f):
   handle_modes(env_f, model, validate, partial(train_model, env_f))

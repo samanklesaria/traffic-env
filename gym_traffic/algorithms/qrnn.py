@@ -154,7 +154,7 @@ def train_model(sess, dbg, writer, save, save_best, env):
     save(global_step=step)
 
 def validate(sess, env):
-  return episode_reward(epoch(sess, env, "main/greedy:0"))
+  return episode_reward(env, epoch(sess, env, "main/greedy:0"))
 
 def run(env_f):
   handle_modes(env_f, model, validate, train_model)

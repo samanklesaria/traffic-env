@@ -12,4 +12,4 @@ def run(env_f):
       o,r,d,info = env.step(ones)
       yield i,o,ones,r,info
       if d: break
-  print_running_stats(forever(lambda: episode_reward(episode())))
+  print_running_stats(forever(lambda: episode_reward(env, episode())))
