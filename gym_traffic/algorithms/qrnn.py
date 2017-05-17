@@ -6,13 +6,14 @@ def build_net(env, temp, n_ep, n_exp, observations, lens):
   reshape0 = tf.reshape(observations, [-1, env.observation_space.size]) 
   pre_gru = tf.reshape(tf.layers.dense(reshape0, 180, tf.nn.relu),
       [n_ep, n_exp, 180])
-  gru = rnn.GRUCell(180)
+  gru = rnn.GRUCell(220)
   state_in = tf.identity(gru.zero_state(n_ep, tf.float32), name="state_in")
   rnn_out, state_out = tf.nn.dynamic_rnn(gru,
     pre_gru, lens, state_in, dtype=tf.float32)
   tf.identity(state_out, name="state_out")
-  reshaped = tf.reshape(rnn_out, [-1, 180]) 
-  a_stream, v_stream = tf.split(reshaped, 2, 1)
+  reshaped = tf.reshape(rnn_out, [-1, 220]) 
+  mid = tf.layers.dense(reshaped, 180, tf.nn.relu)
+  a_stream, v_stream = tf.split(mid, 2, 1)
   advantage = tf.reshape(tf.layers.dense(a_stream, env.action_space.size * 2),
     (n_ep, n_exp, env.action_space.size, 2))
   value = tf.reshape(tf.layers.dense(v_stream, env.action_space.size * 2),
@@ -111,8 +112,8 @@ def epoch(sess, env, cmd):
     fd = {"batch/obs:0":[[obs]],'n_exp:0':1,'n_ep:0':1}
     if rnn is not None: fd['main/state_in:0'] = rnn  
     a,rnn = sess.run([cmd, "main/state_out:0"], fd)
-    new_obs, reward, done, _ = env.step(a[0,0])
-    yield t,obs,a[0,0],reward,new_obs,done
+    new_obs, reward, done,info = env.step(a[0,0])
+    yield t,obs,a[0,0],reward,info,new_obs,done
     if done: break
     obs = new_obs
 
@@ -125,7 +126,7 @@ def train_model(sess, dbg, writer, save, save_best, env):
   try:
     while FLAGS.total_episodes is None or episode_num < FLAGS.total_episodes:
       episode_num = sess.run("episode_num:0")
-      for (t,s,a,r,s1,d) in epoch(sess, env, "main/explore:0"):
+      for (t,s,a,r,_,s1,d) in epoch(sess, env, "main/explore:0"):
         sess.run("add_experience", feed_dict={'a:0':a,'s:0':s,'r:0':r,'nd:0': not d})
         if episode_num >= FLAGS.buffer_size - 1 and (t % FLAGS.train_rate) == 0:
           if step % FLAGS.summary_rate == 0:
@@ -140,14 +141,13 @@ def train_model(sess, dbg, writer, save, save_best, env):
       sess.run("end_episode", feed_dict={'s:0': s1})
       sess.run("dec_eps")
       if episode_num % FLAGS.validate_rate == 0:
-        rew = validate(sess, env)
+        rew = validate(sess, env)[0]
         print("Reward", rew)
         smry = sess.run("avg_r_summary:0", feed_dict={"avg_r:0":rew})
         writer.add_summary(smry, global_step=step)
         if best_threshold < rew:
           save_best(global_step=step)
           best_threshold = rew
-      if episode_num % FLAGS.save_rate == 0:
       if episode_num % FLAGS.save_rate == 0:
         save(global_step=step)
   finally:
@@ -157,4 +157,4 @@ def validate(sess, env):
   return episode_reward(epoch(sess, env, "main/greedy:0"))
 
 def run(env_f):
-  handle_modes(env_f, model, validate, train_model)
+  return handle_modes(env_f, model, validate, train_model)
