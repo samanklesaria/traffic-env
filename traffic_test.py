@@ -3,6 +3,7 @@ import gym_traffic
 from gym_traffic.spaces.gspace import GSpace
 from gym_traffic.envs.roadgraph import GridRoad
 from gym_traffic.wrappers.warmup import WarmupWrapper
+from gym_traffic.wrappers.gspace import UnGSpaceWrapper
 import numpy as np
 from args import parse_flags, add_argument, add_derivation, FLAGS
 from alg_flags import run_alg
@@ -86,6 +87,7 @@ def make_env():
   if FLAGS.local_weight > 1: env = LocalizeWrapper(env)
   if FLAGS.squish_rewards: env = SquishReward(env)
   if FLAGS.history > 1: env = HistoryWrapper(FLAGS.history)(env)
+  if FLAGS.single_agent: env = UnGSpaceWrapper(env)
   return env
 
 if __name__ == '__main__':

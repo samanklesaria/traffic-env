@@ -36,6 +36,7 @@ add_argument('--train_rate', 1, type=int)
 add_argument('--total_episodes', None, type=int)
 add_argument('--best_threshold', 30.0, type=float)
 add_argument('--interactive', False, type=bool)
+add_argument('--single_agent', False, type=bool)
 
 def std_derivations():
   if FLAGS.render: FLAGS.mode = 'validate'

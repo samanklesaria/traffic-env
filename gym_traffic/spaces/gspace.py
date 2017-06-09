@@ -5,7 +5,7 @@ class GSpace(gym.Space):
   def __init__(self, shape, l):
     self.limit = l
     self.shape = shape
-    self.size = np.prod(shape)
+    self.size = int(np.prod(shape))
 
   def contains(self, x):
     return x.shape == self.shape
