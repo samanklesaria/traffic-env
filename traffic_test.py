@@ -46,10 +46,10 @@ def Repeater(repeat_count):
       else: info = None
       for _ in range(repeat_count):
         obs, reward, done, _ = self.env.step(action)
-        total_obs[:self.r] += obs[:self.r]
-        total_obs[self.r:2*self.r] = obs[self.r:2*self.r]
+        total_obs[:self.r] += obs[:self.r] # passed in the last interval
+        total_obs[self.r:2*self.r] = obs[self.r:2*self.r] # detected currently
         multiplier = 2 * obs[-2*self.i:-self.i] - 1
-        total_obs[-self.i:] = obs[-self.i:] / 100 * multiplier
+        total_obs[-self.i:] = obs[-self.i:] / 100 * multiplier # elapsed time and phase
         total_reward += reward
         if done: break
       return total_obs, total_reward, done, info

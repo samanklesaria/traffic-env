@@ -63,7 +63,7 @@ def display_data(light_times, trip_times, unfinished):
   plt.show()
   print("Light times mean %2f, mode %2f, std %2f" % (np.mean(light_times), stats.mode(light_times, axis=None).mode, np.std(light_times)))
   print("Trip times mean %2f, mode %2f, std %2f" % (np.mean(trip_times), stats.mode(trip_times, axis=None).mode, np.std(trip_times)))
-  print("Unfinished mean %2f, mode %2f, std %2f" % np.mean(unfinished), stats.mode(unfinished, axis=None).mode, np.std(unfinished))
+  print("Unfinished mean %2f, mode %2f, std %2f" % (np.mean(unfinished), stats.mode(unfinished, axis=None).mode, np.std(unfinished)))
 
 def episode_reward(env, gen):
   num_0s = 0
