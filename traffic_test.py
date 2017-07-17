@@ -55,25 +55,6 @@ def Repeater(repeat_count):
       return total_obs, total_reward, done, info
   return Repeater
 
-class Remi(gym.Wrapper):
-  def _step(self, action):
-    obs, _, done, info = self.env.step(action)
-    r = self.unwrapped.remi_reward() 
-    self.unwrapped.passed_dst[:] = False
-    return obs, r, done, info
-    
-class LocalizeWrapper(gym.RewardWrapper):
-  def _reward(self, a):
-    d = np.diag(a) * (FLAGS.local_weight - 1)
-    return np.mean(d + a, axis=1) / FLAGS.local_weight
-
-class SquishReward(gym.RewardWrapper):
-  def __init__(self, env):
-    super().__init__(env)
-    self.reward_size = 1
-  def _reward(self, a):
-    return np.mean(a)
-
 def make_env():
   env = gym.make('traffic-v0')
   env.set_graph(GridRoad(3,3,250))
@@ -82,9 +63,6 @@ def make_env():
   if FLAGS.render: env.rendering = True
   env = Repeater(FLAGS.light_iterations)(env)
   if FLAGS.warmup_lights > 0: env = WarmupWrapper(FLAGS.warmup_lights)(env)
-  if FLAGS.remi: env = Remi(env)
-  if FLAGS.local_weight > 1: env = LocalizeWrapper(env)
-  if FLAGS.squish_rewards: env = SquishReward(env)
   if FLAGS.history > 1: env = HistoryWrapper(FLAGS.history)(env)
   return env
 
