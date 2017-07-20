@@ -6,17 +6,14 @@ add_argument('--beta', 0.001, type=float)
 def qlearn_derivations():
   if FLAGS.trainer == 'qlearn':
     FLAGS.history = 10
-    if FLAGS.use_avg: FLAGS.gamma = 1
 add_derivation(qlearn_derivations)
 
 def build_net(env, temp, observations):
-  reshaped = tf.reshape(observations, [-1, env.observation_space.size])
+  reshaped = tf.reshape(observations, [-1, env.observation_space.shape[1]])
   h0 = tf.layers.dense(reshaped, 200, tf.nn.relu)
   h1 = tf.layers.dense(h0, 220, tf.nn.relu)
-  h2 = tf.layers.dense(h1, 200, tf.nn.relu)
-  resid = tf.layers.dense(h2, 200)
-  h3 = tf.nn.relu(h2 + resid)
-  flat_qval = tf.layers.dense(h3, env.action_space.size * 2, name="qout")
+  together = h1.reshape(-1, env.observation_space.size)
+  flat_qval = tf.layers.dense(together, env.action_space.size * 2, name="qout")
   qvals = tf.reshape(flat_qval, (-1, env.action_space.size, 2), name="qvals")
   softmax_decision(qvals, temp)
 
@@ -24,7 +21,7 @@ def exp_replay(env):
   with tf.variable_scope("replay"):
     a = tf.Variable(tf.zeros((FLAGS.buffer_size, env.action_space.size),
       dtype=tf.int32), trainable=False, name="action_replay")
-    r = tf.Variable(tf.zeros((FLAGS.buffer_size, env.reward_size),
+    r = tf.Variable(tf.zeros([FLAGS.buffer_size],
       dtype=tf.float32), trainable=False, name="reward_replay")
     d = tf.Variable(tf.zeros(FLAGS.buffer_size, dtype=tf.float32), trainable=False, name="nd_replay")
     s = tf.Variable(tf.zeros((FLAGS.buffer_size, *env.observation_space.shape),
@@ -55,10 +52,6 @@ def model(env):
   episode_num = tf.Variable(0,dtype=tf.int32,name='episode_num',trainable=False)
   tf.assign_add(episode_num, 1, name="incr_episode")
   eps = exploration_param()
-  if FLAGS.use_avg:
-    rho = tf.Variable(tf.random_normal([]), name="rho")
-    tf.summary.scalar("rho_val", rho)
-  else: rho = 0
   actions, rewards, observations, new_observations, notdone = exp_replay(env)
   with tf.variable_scope("main"): build_net(env, eps, observations)
   with tf.variable_scope("chooser"): build_net(env, eps, new_observations)
@@ -71,7 +64,7 @@ def model(env):
     tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'chooser'))], name="update_chooser")
   policy_onehot = tf.one_hot(ref("chooser/greedy:0"), 2, dtype=tf.float32)
   nextQ = tf.reduce_sum(tf.multiply(ref("target/qvals:0"), policy_onehot), axis=2)
-  targetQ = tf.stop_gradient(rewards - rho + FLAGS.gamma * notdone * nextQ, name="targetQ")
+  targetQ = tf.stop_gradient(rewards + FLAGS.gamma * notdone * nextQ, name="targetQ")
   actions_onehot = tf.one_hot(actions, 2, dtype=tf.float32)
   predictedQ = tf.reduce_sum(tf.multiply(ref("main/qvals:0"), actions_onehot),
       axis=2, name="predictedQ")

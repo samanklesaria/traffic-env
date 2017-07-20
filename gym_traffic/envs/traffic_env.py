@@ -14,17 +14,11 @@ add_argument('--poisson',True, type=bool)
 add_argument('--entry', 'all')
 add_argument('--learn_switch', False, type=bool)
 
-# Need to add in the reward calculation stuff
-
-
 # Python attribute access is expensive. We hardcode these params
-PASSING_REWARD = 0
 YELLOW_TICKS = 6
-DECEL_PENALTY = False
-OVERFLOW_PENALTY = 10
 CAPACITY = 20
 EPS = 1e-8
-TRIP_BUFFER = 1000
+TRIP_BUFFER = 50
 
 # Get the rotation of a line segment
 def get_rot(line, length):
@@ -50,7 +44,7 @@ SQRT_AB = 2 * np.sqrt(A*B)
 def wrap(a): return 1 if a >= CAPACITY else a
 
 # The Intelligent Driver Model of forward acceleration
-@jit(float32[:](float32,float32[:,:],float32[:,:]), nopython=True,nogil=True,cache=True)
+@jit(void(float32,float32[:,:],float32[:,:]), nopython=True,nogil=True,cache=True)
 def sim(r, ld, me):
   v = me[vi]
   s_star = S0 + np.maximum(0, v*T + v *
@@ -80,8 +74,8 @@ def update_lights(dests,phases,length,nexts,state,leading,lastcar,current_phase,
 
 # Add a new car to a road
 @jit(boolean(int32,float32[:],float32[:,:,:],int32[:],int32[:],
-  float32[:],int32[:]),nopython=True,nogil=True,cache=True)
-def add_car(road,car,state,leading,lastcar,rewards,dests):
+  int32[:]),nopython=True,nogil=True,cache=True)
+def add_car(road,car,state,leading,lastcar,dests):
   pos = wrap(lastcar[road] + 1)
   start_pos = np.inf
   if lastcar[road] != leading[road]:
@@ -92,14 +86,13 @@ def add_car(road,car,state,leading,lastcar,rewards,dests):
     lastcar[road] = pos
     return False
   else:
-    rewards -= OVERFLOW_PENALTY
     return True
 
 # Remove cars with x coordinates beyond their roads' lengths
-@jit(boolean(int32[:],float32,int32[:],float32[:,:,:],int32[:],int32[:],float32[:],
-  float32[:], int32, int32),nopython=True,nogil=True,cache=True)
-def advance_finished_cars(dests,length,nexts,state,leading,lastcar,rewards,
-    trip_times, trip_ix, tick):
+@jit(boolean(int32[:],float32,int32[:],float32[:,:,:],int32[:],int32[:],
+  float32[:], float32[:], int32[:], float32),nopython=True,nogil=True,cache=True)
+def advance_finished_cars(dests,length,nexts,state,leading,lastcar,
+    trip_times, rewards, trip_ix, tick):
   overflowed = False
   for e in range(nexts.shape[0]):
     while leading[e] != lastcar[e] and state[e,xi,wrap(leading[e]+1)] > length:
@@ -109,9 +102,15 @@ def advance_finished_cars(dests,length,nexts,state,leading,lastcar,rewards,
         state[e,xi,newlead] -= length
         state[e,pi,newlead] += 1
         overflowed = add_car(newrd,state[e,:,newlead],state,
-            leading,lastcar,rewards,dests) or overflowed
+            leading,lastcar,dests) or overflowed
       else:
-        trip_times[trip_ix] = tick - state[e,ti,newlead]
+        triptime = tick - state[e,ti,newlead]
+        trip_times[trip_ix[0]] = triptime
+        rewards[0] += (1 / triptime**2)
+        trip_ix[0] += 1
+        if trip_ix[0] >= TRIP_BUFFER:
+          trip_ix[0] = 0
+          trip_ix[1] = 1
       state[e,:,newlead] = state[e,:,leading[e]]
       leading[e] = newlead
   return overflowed
@@ -145,7 +144,7 @@ def inv_popcount(inv_i):
   return (((i + (i >> 4) & 0xF0F0F0F) * 0x1010101) & 0xffffffff) >> 24
 
 @jit(void(int32[:],int32[:],float32,int32[:],float32[:,:,:],int32[:],int32[:],
-  float32,int32[:],int32[:],int32[:],int32[:]),
+  float32,int32[:],int32[:],int32[:]),
   nopython=True,nogil=True,cache=True)
 def move_cars(dests,phases,length,nexts,state,leading,lastcar,rate,current_phase,elapsed,detected):
   update_lights(dests,phases,length,nexts,state,leading,lastcar,current_phase,elapsed)
@@ -182,13 +181,18 @@ class TrafficEnv(gym.Env):
         self.current_phase, self.elapsed, self.detected)
     self.steps += 1
     overflowed |= advance_finished_cars(self.graph.dest, self.graph.len, self.graph.nexts, self.state,
-      self.leading,self.lastcar,self.rewards,self.trip_times, self.trip_ix, self.steps)
-    return self.obs, self.rewards, overflowed, None
+      self.leading,self.lastcar,self.trip_times, self.rewards, self.trip_ix, self.steps)
+    return self.obs, self.rewards[0], overflowed, None
 
   def seed_generator(self, seed=None):
     self.rand = np.random.RandomState(seed)
     if FLAGS.poisson: self.rand_car = poisson(self.rand)
     else: self.rand_car = regular(self.rand)
+
+  def cars_on_roads(self):
+    inverted = (self.leading > self.lastcar).astype(np.int32)
+    unwrapped_lastcar = inverted * np.int32(CAPACITY - 1) + self.lastcar
+    return unwrapped_lastcar - self.leading
 
   def _reset(self):
     self.steps = np.float32(0)
@@ -198,9 +202,9 @@ class TrafficEnv(gym.Env):
     self.elapsed[:] = 0
     self.leading[:] = 1
     self.lastcar[:] = 1
-    self.rewards = np.float32(0)
+    self.rewards = np.zeros(1, dtype=np.float32)
     self.current_phase[:] = self.action_space.sample()
-    self.trip_ix = 0;
+    self.trip_ix = np.zeros(2, dtype=np.int32)
     return self.obs
 
   def add_new_cars(self, tick):
@@ -210,7 +214,7 @@ class TrafficEnv(gym.Env):
       self.generated_cars += 1
       car[ti] = tick
       overflowed = add_car(self.rand.choice(self.graph.entrypoints),car,self.state,
-        self.leading,self.lastcar,self.rewards,self.graph.dest) or overflowed
+        self.leading,self.lastcar,self.graph.dest) or overflowed
       car = next(self.rand_car)
     return overflowed
 
@@ -299,11 +303,11 @@ class TrafficEnv(gym.Env):
     self.action_space = GSpace([graph.intersections], np.int32(2))
     r = graph.train_roads
     i = graph.intersections
-    obs_shape = [2*r+2*i]
+    obs_shape = [r+2*i]
     self.observation_space = GSpace(obs_shape, np.int32(1))
     self.obs = np.zeros(obs_shape, dtype=np.int32)
-    self.detected = self.obs[r:r+r]
-    self.current_phase = self.obs[r+r:r+r+i]
+    self.detected = self.obs[:r]
+    self.current_phase = self.obs[r:r+i]
     self.elapsed = self.obs[-i:]
     self.trip_times = np.empty(TRIP_BUFFER, dtype=np.float32)
     self.reset_entrypoints()
@@ -314,3 +318,9 @@ class TrafficEnv(gym.Env):
     else: spec = 0
     self.graph.generate_entrypoints(spec)
     FLAGS.cars_per_sec = FLAGS.local_cars_per_sec * self.graph.m * inv_popcount(spec)
+  
+  def triptimes(self):
+    if self.trip_ix[1] == 1:
+      return self.trip_times
+    return self.trip_times[:self.trip_ix[0]]
+

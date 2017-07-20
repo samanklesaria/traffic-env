@@ -8,6 +8,7 @@ def phase(i):
 
 def run(env_f):
   FLAGS.learn_switch = False
+  FLAGS.mode = 'validate'
   env = env_f()
   actions = np.zeros((2, *env.action_space.shape))
   actions[1,:] = 1

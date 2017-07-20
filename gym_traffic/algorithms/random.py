@@ -5,6 +5,7 @@ from args import FLAGS
 
 def run(env_f):
   FLAGS.learn_switch = False
+  FLAGS.mode = 'validate'
   env = env_f()
   def episode():
     obs = env.reset()

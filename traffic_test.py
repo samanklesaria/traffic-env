@@ -10,50 +10,48 @@ from gym_traffic.wrappers.history import HistoryWrapper
 
 add_argument('--episode_secs', 600, type=int)
 add_argument('--light_secs', 5, type=int)
-add_argument('--warmup_lights', 0, type=int)
-add_argument('--local_weight', 1, type=int)
-add_argument('--squish_rewards', False, type=bool)
-add_argument('--remi', True, type=bool)
+add_argument('--warmup_lights', 10, type=int)
+add_argument('--obs_rate', 5, type=int)
 
 def secs_derivations():
   FLAGS.episode_len = int(FLAGS.episode_secs / FLAGS.light_secs)
   FLAGS.light_iterations = int(FLAGS.light_secs / FLAGS.rate)
   FLAGS.episode_ticks = int(FLAGS.episode_secs / FLAGS.rate)
-  if FLAGS.trainer == 'polgrad_rnn': FLAGS.use_avg = True
 add_derivation(secs_derivations)
 
-# eventually this should be incorperated into traffic-env
-def Repeater(repeat_count):
-  class Repeater(gym.Wrapper):
-    def __init__(self, env):
-      super(Repeater, self).__init__(env)
-      self.r = self.unwrapped.graph.train_roads
-      self.i = self.unwrapped.graph.intersections
-      self.observation_space = GSpace([2*self.r+self.i], np.float32(1))
-    def _reset(self):
-      super(Repeater, self)._reset()
-      return self._step(self.action_space.sample())[0]
-    def _step(self, action):
-      done = False
-      total_reward = 0
-      total_obs = np.zeros(self.observation_space.shape, dtype=np.float32)
-      if FLAGS.mode == 'validate':
-        change = np.logical_xor(self.env.current_phase, action).astype(np.int32) 
-        light_dist = (self.env.elapsed + 1) * change.astype(np.int32)
-        light_dist_secs = light_dist.astype(np.float32) / 2
-        change_times = light_dist_secs[np.nonzero(light_dist_secs)]
-        info = {'light_times': change_times}
-      else: info = None
-      for _ in range(repeat_count):
-        obs, reward, done, _ = self.env.step(action)
-        total_obs[:self.r] += obs[:self.r] # passed in the last interval
-        total_obs[self.r:2*self.r] = obs[self.r:2*self.r] # detected currently
-        multiplier = 2 * obs[-2*self.i:-self.i] - 1
-        total_obs[-self.i:] = obs[-self.i:] / 100 * multiplier # elapsed time and phase
-        total_reward += reward
-        if done: break
-      return total_obs, total_reward, done, info
-  return Repeater
+class Repeater(gym.Wrapper):
+  def __init__(self, env):
+    super(Repeater, self).__init__(env)
+    self.r = self.unwrapped.graph.train_roads
+    self.i = self.unwrapped.graph.intersections
+    self.observation_space = GSpace([self.i, FLAGS.obs_rate * 4 + 1], np.float32(1))
+  def _reset(self):
+    super(Repeater, self)._reset()
+    return self._step(self.action_space.sample())[0]
+  def _step(self, action):
+    done = False
+    total_reward = 0
+    detected = np.zeros((FLAGS.obs_rate, self.r), dtype=np.float32)
+    elapsed_phase = np.zeros(self.i, dtype=np.float32)
+    if FLAGS.mode == 'validate':
+      change = np.logical_xor(self.env.current_phase, action).astype(np.int32) 
+      light_dist = (self.env.elapsed + 1) * change.astype(np.int32)
+      light_dist_secs = light_dist.astype(np.float32) / 2
+      change_times = light_dist_secs[np.nonzero(light_dist_secs)]
+      info = {'light_times': change_times}
+    else: info = None
+    obs_modulus = FLAGS.light_iterations // FLAGS.obs_rate
+    for it in range(FLAGS.light_iterations):
+      obs, reward, done, _ = self.env.step(action)
+      total_reward += reward
+      if done: break
+      detected[it // obs_modulus] += obs[:self.r]
+    multiplier = 2 * obs[-2*self.i:-self.i] - 1
+    elapsed_phase = obs[-self.i:] / 100 * multiplier 
+    reshaped = detected.reshape(FLAGS.obs_rate, self.i, 4)
+    for_conv = reshaped.transpose((1, 0, 2)).reshape(self.i, -1)
+    total_obs = np.concatenate((for_conv, elapsed_phase[:,None]), 1)
+    return total_obs, total_reward, done, info
 
 def make_env():
   env = gym.make('traffic-v0')
@@ -61,7 +59,7 @@ def make_env():
   env.seed_generator()
   env.reset_entrypoints()
   if FLAGS.render: env.rendering = True
-  env = Repeater(FLAGS.light_iterations)(env)
+  env = Repeater(env)
   if FLAGS.warmup_lights > 0: env = WarmupWrapper(FLAGS.warmup_lights)(env)
   if FLAGS.history > 1: env = HistoryWrapper(FLAGS.history)(env)
   return env

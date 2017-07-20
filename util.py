@@ -72,24 +72,18 @@ def episode_reward(env, gen):
   multiplier = 1.0
   light_times = []
   for (i,_,a,r,info,*_) in gen:
-    reward += np.mean(r) * (multiplier if FLAGS.print_discounted else 1)
+    reward += r * multiplier 
     multiplier *= FLAGS.gamma
     if info:
       light_times.extend(info['light_times'])
       nz = np.count_nonzero(a)
       num_1s += nz
       num_0s += (len(a) - nz)
-  if not FLAGS.print_avg:
-    denom = 1
-  elif FLAGS.gamma == 1:
-    denom = i+1
-  else:
-    denom = (math.pow(FLAGS.gamma, i+1) - 1) / (FLAGS.gamma - 1) 
   if FLAGS.mode == 'validate':
     total_actions = num_1s + num_0s
     info_struct = {'zerop': num_0s / total_actions, 'light_times': light_times,
-      'onep': num_1s / total_actions, 'trip_times': env.unwrapped.trip_times,
+      'onep': num_1s / total_actions, 'trip_times': env.unwrapped.triptimes(),
       'unfinished': np.sum(env.unwrapped.cars_on_roads())}
   else: info_struct = None
-  return (reward / denom, info_struct)
+  return (reward, info_struct)
 

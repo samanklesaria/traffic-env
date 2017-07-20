@@ -55,7 +55,7 @@ def handle_modes(env_f, model, val, train):
       if FLAGS.debug:
         from tensorflow.python import debug as tf_debug
         dbg = tf_debug.LocalCLIDebugWrapperSession(sess)
-        # dbg.add_tensor_filter("has_inf_or_nan", tf_debug.has_inf_or_nan)
+        dbg.add_tensor_filter("has_inf_or_nan", tf_debug.has_inf_or_nan)
       else: dbg = sess
       train(sess, dbg, summary_writer, partial(saver.save, sess, model_file),
           partial(saver.save, sess, best_file), env)
