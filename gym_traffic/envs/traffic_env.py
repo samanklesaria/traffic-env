@@ -182,7 +182,7 @@ class TrafficEnv(gym.Env):
     self.steps += 1
     overflowed |= advance_finished_cars(self.graph.dest, self.graph.len, self.graph.nexts, self.state,
       self.leading,self.lastcar,self.trip_times, self.rewards, self.trip_ix, self.steps)
-    return self.obs, self.rewards[0], overflowed, None
+    return self.obs, self.rewards[0], bool(overflowed), None
 
   def seed_generator(self, seed=None):
     self.rand = np.random.RandomState(seed)

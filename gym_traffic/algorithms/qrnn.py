@@ -149,17 +149,18 @@ def train_model(sess, dbg, writer, save, save_best, env):
           if step % FLAGS.target_update_rate == 0:
             sess.run("update_target")
       sess.run("end_episode", feed_dict={'s:0': s1})
-      if episode_num >= FLAGS.buffer_size: sess.run("dec_eps")
-      if episode_num % FLAGS.validate_rate == 0:
-        rew = validate(sess, env)[0]
-        print("Reward", rew)
-        smry = sess.run("avg_r_summary:0", feed_dict={"avg_r:0":rew})
-        writer.add_summary(smry, global_step=step)
-        if best_threshold < rew:
-          save_best(global_step=step)
-          best_threshold = rew
-      if episode_num % FLAGS.save_rate == 0:
-        save(global_step=step)
+      if episode_num >= FLAGS.buffer_size:
+        sess.run("dec_eps")
+        if episode_num % FLAGS.validate_rate == 0:
+          rew = validate(sess, env)[0]
+          print("Reward", rew)
+          smry = sess.run("avg_r_summary:0", feed_dict={"avg_r:0":rew})
+          writer.add_summary(smry, global_step=step)
+          if best_threshold < rew:
+            save_best(global_step=step)
+            best_threshold = rew
+        if episode_num % FLAGS.save_rate == 0:
+          save(global_step=step)
   finally:
     save(global_step=step)
 

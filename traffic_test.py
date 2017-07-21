@@ -6,7 +6,6 @@ from gym_traffic.wrappers.warmup import WarmupWrapper
 import numpy as np
 from args import parse_flags, add_argument, add_derivation, FLAGS
 from alg_flags import run_alg
-from gym_traffic.wrappers.history import HistoryWrapper
 
 add_argument('--episode_secs', 600, type=int)
 add_argument('--light_secs', 5, type=int)
@@ -61,7 +60,6 @@ def make_env():
   if FLAGS.render: env.rendering = True
   env = Repeater(env)
   if FLAGS.warmup_lights > 0: env = WarmupWrapper(FLAGS.warmup_lights)(env)
-  if FLAGS.history > 1: env = HistoryWrapper(FLAGS.history)(env)
   return env
 
 if __name__ == '__main__':
