@@ -1,6 +1,6 @@
 import tensorflow as tf
 import numpy as np
-from util import print_running_stats
+from util import *
 from args import FLAGS
 
 def run(env_f):
@@ -12,4 +12,6 @@ def run(env_f):
       o,r,d,info = env.step(ones)
       yield i,o,ones,r,info
       if d: break
-  print_running_stats(forever(lambda: episode_reward(env, episode())))
+  data = print_running_stats(forever(lambda: episode_reward(env, episode())))
+  if FLAGS.interactive: return data
+  write_data(*data)
