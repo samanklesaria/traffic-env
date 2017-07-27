@@ -26,18 +26,21 @@ class Repeater(gym.Wrapper):
     self.observation_space = GSpace([self.i, FLAGS.obs_rate * 4 + 1], np.float32(1))
   def _reset(self):
     super(Repeater, self)._reset()
-    return self._step(self.action_space.sample())[0]
+    return np.zeros(self.observation_space.shape)
   def _step(self, action):
     done = False
     total_reward = 0
     detected = np.zeros((FLAGS.obs_rate, self.r), dtype=np.float32)
     elapsed_phase = np.zeros(self.i, dtype=np.float32)
     if FLAGS.mode == 'validate':
-      change = np.logical_xor(self.env.current_phase, action).astype(np.int32) 
-      light_dist = (self.env.elapsed + 1) * change.astype(np.int32)
-      light_dist_secs = light_dist.astype(np.float32) / 2
-      change_times = light_dist_secs[np.nonzero(light_dist_secs)]
+      if self.env.steps == 0: change_times = []
+      else:
+        change = np.logical_xor(self.env.current_phase, action).astype(np.int32) 
+        light_dist = (self.env.elapsed + 1) * change.astype(np.int32)
+        light_dist_secs = light_dist.astype(np.float32) / 2
+        change_times = light_dist_secs[np.nonzero(light_dist_secs)]
       info = {'light_times': change_times}
+      print("Times", change_times)
     else: info = None
     obs_modulus = FLAGS.light_iterations // FLAGS.obs_rate
     for it in range(FLAGS.light_iterations):
@@ -54,7 +57,7 @@ class Repeater(gym.Wrapper):
 
 def make_env():
   env = gym.make('traffic-v0')
-  env.set_graph(GridRoad(1,1,250))
+  env.set_graph(GridRoad(3,3,250))
   env.seed_generator()
   env.reset_entrypoints()
   if FLAGS.render: env.rendering = True

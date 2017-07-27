@@ -11,7 +11,7 @@ from args import FLAGS, add_argument
 add_argument('--local_cars_per_sec', 0.12, type=float)
 add_argument('--rate', 0.5, type=float)
 add_argument('--poisson',True, type=bool)
-add_argument('--entry', 'all')
+add_argument('--entry', 'one')
 add_argument('--learn_switch', False, type=bool)
 
 # Python attribute access is expensive. We hardcode these params
@@ -167,13 +167,12 @@ class TrafficEnv(gym.Env):
   metadata = {'render.modes': ['human']}
 
   def _step(self, action):
-    if FLAGS.learn_switch:
-      change = action
-      self.current_phase[:] = np.logical_xor(self.current_phase, action) 
-    else:
-      change = np.logical_xor(self.current_phase, action).astype(np.int32) 
-      self.current_phase[:] = action
     self.elapsed += 1 
+    if self.steps > 0:
+      change = np.logical_xor(self.current_phase, action).astype(np.int32) 
+    else:
+      change = np.ones_like(action).astype(np.int32)
+    self.current_phase[:] = action
     self.elapsed *= np.logical_not(change).astype(np.int32)
     overflowed = self.add_new_cars(self.steps)
     move_cars(self.graph.dest, self.graph.phases, self.graph.len,
@@ -203,7 +202,7 @@ class TrafficEnv(gym.Env):
     self.leading[:] = 1
     self.lastcar[:] = 1
     self.rewards = np.zeros(1, dtype=np.float32)
-    self.current_phase[:] = self.action_space.sample()
+    # self.current_phase[:] = self.action_space.sample()
     self.trip_ix = np.zeros(2, dtype=np.int32)
     return self.obs
 

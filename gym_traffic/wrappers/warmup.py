@@ -13,5 +13,5 @@ def WarmupWrapper(ignore_count):
           if done:
             print("Episode completed during warmup")
             break
-          else: return obs
+        else: return obs
   return WarmupWrapper
