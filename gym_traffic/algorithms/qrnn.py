@@ -3,10 +3,6 @@ import tensorflow.contrib.rnn as rnn
 from gym_traffic.algorithms.util import *
 
 # Our input is batch_size x trace_size x intersections x featues
-# Ensure that grus get initialized. Check the source or the tutorials
-
-# where did my histograms go?
-# print EVERYTHING
 
 def build_net(env, temp, n_ep, n_exp, observations, lens):
   intersections, features = env.observation_space.shape
@@ -20,12 +16,15 @@ def build_net(env, temp, n_ep, n_exp, observations, lens):
   rnn_out, state_out = tf.nn.dynamic_rnn(gru,
     pre_gru, tiled_lens, state_in, dtype=tf.float32)
   tf.identity(state_out, name="state_out")
-  reshaped = tf.reshape(rnn_out, [-1, 30])
-  advantages = tf.layers.dense(reshaped, 2)
-  values = tf.layers.dense(reshaped, 2)
+  post_gru = tf.layers.dense(tf.reshape(rnn_out, [-1, 30]), 20, tf.nn.relu)
+  advantages = tf.layers.dense(post_gru, 2, activation=None)
+  values = tf.layers.dense(post_gru, 2, activation=None)
+  tf.summary.histogram("values", values)
   bundled = values + advantages - tf.reduce_mean(advantages, axis=-1, keep_dims=True)
   scores = tf.transpose(tf.reshape(bundled, (-1, n_ep, n_exp, 2)),
       perm=(1,2,0,3), name="qvals") # batch x trace x intersection x 2
+  tf.summary.histogram("advantage0", advantages[:,0])
+  tf.summary.histogram("advantage1", advantages[:,1])
   softmax_decision(scores, temp) 
 
 def random_trace(n_exp, p):
@@ -106,8 +105,8 @@ def model(env):
   main_vars = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'main')
   grads,_ = tf.clip_by_global_norm(tf.gradients(loss, main_vars), 40.0)
   opt.apply_gradients(zip(grads, main_vars), name="train", global_step=step)
-  for i,g in enumerate(grads):
-    tf.summary.histogram("grad" + str(i), g)
+  # for i,g in enumerate(grads):
+  #   tf.summary.histogram("grad" + str(i), g)
   # opt.minimize(loss, var_list=tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, 'main'),
   #     name="train", global_step=step)
   tf.summary.histogram("predicted_q", predictedQ)
@@ -117,6 +116,7 @@ def model(env):
 
 def epoch(sess, env, cmd):
   rnn = None
+  env.unwrapped.reset_entrypoints()
   obs = env.reset()
   for t in range(FLAGS.episode_len):
     fd = {"batch/obs:0":[[obs]],'n_exp:0':1,'n_ep:0':1, 'batch/sizes:0':[1]}
@@ -169,3 +169,6 @@ def validate(sess, env):
 
 def run(env_f):
   return handle_modes(env_f, model, validate, train_model)
+
+# we also need to see which action it is taking
+# Maybe we should separate the scores into the scores for each action
