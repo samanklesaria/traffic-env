@@ -35,7 +35,7 @@ class Repeater(gym.Wrapper):
     if FLAGS.mode == 'validate':
       change = np.logical_xor(self.env.current_phase, action).astype(np.int32) 
       light_dist = (self.env.elapsed + 1) * change.astype(np.int32)
-      light_dist_secs = light_dist.astype(np.float32) / 2
+      light_dist_secs = light_dist.astype(np.float32) * FLAGS.rate
       change_times = light_dist_secs[np.nonzero(light_dist_secs)]
       info = {'light_times': change_times}
     else: info = None
@@ -54,7 +54,7 @@ class Repeater(gym.Wrapper):
 
 def make_env():
   env = gym.make('traffic-v0')
-  env.set_graph(GridRoad(1,1,250))
+  env.set_graph(GridRoad(3,3,250))
   env.seed_generator()
   env.reset_entrypoints()
   if FLAGS.render: env.rendering = True

@@ -11,7 +11,7 @@ from args import FLAGS, add_argument
 add_argument('--local_cars_per_sec', 0.12, type=float)
 add_argument('--rate', 0.5, type=float)
 add_argument('--poisson',True, type=bool)
-add_argument('--entry', 'all')
+add_argument('--entry', 'random')
 add_argument('--learn_switch', False, type=bool)
 
 # Python attribute access is expensive. We hardcode these params
