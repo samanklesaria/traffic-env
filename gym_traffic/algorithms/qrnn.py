@@ -2,29 +2,38 @@ import tensorflow as tf
 import tensorflow.contrib.rnn as rnn
 from gym_traffic.algorithms.util import *
 
-# Our input is batch_size x trace_size x intersections x featues
-
 def build_net(env, temp, n_ep, n_exp, observations, lens):
+  # b x trace x inter x feat
   intersections, features = env.observation_space.shape
   transposed = tf.transpose(observations, perm=(2,0,1,3))
   reshape0 = tf.reshape(transposed, [-1, features])
+  # (inter x b x trace) x feat
   tiled_lens = tf.tile(lens, [intersections])
   pre_gru = tf.reshape(tf.layers.dense(reshape0, 50, tf.nn.relu),
       [-1, n_exp, 50])
+  # (inter x b) x trace x 50
   gru = rnn.GRUCell(30, activation=tf.tanh)
   state_in = tf.identity(gru.zero_state(n_ep * intersections, tf.float32), name="state_in")
   rnn_out, state_out = tf.nn.dynamic_rnn(gru,
     pre_gru, tiled_lens, state_in, dtype=tf.float32)
   tf.identity(state_out, name="state_out")
-  post_gru = tf.layers.dense(tf.reshape(rnn_out, [-1, 30]), 20, tf.nn.relu)
-  advantages = tf.layers.dense(post_gru, 2, activation=None)
-  values = tf.layers.dense(post_gru, 2, activation=None)
+  # (inter x b) x trace x 30
+  post_gru = tf.layers.dense(tf.reshape(rnn_out, [-1, 30]), 30, tf.nn.relu)
+  # (inter x b x trace) x 30
+  reshape1 = tf.reshape(tf.transpose(tf.reshape(post_gru, [intersections, n_ep, n_exp, 30]),
+      perm=(1,2,0,3)), (-1, intersections * 30))
+  # (b x trace) x (inter x 30)
+  advantages = tf.layers.dense(reshape1, intersections * 2, activation=None)
+  values = tf.layers.dense(reshape1, intersections * 2, activation=None)
   tf.summary.histogram("values", values)
-  bundled = values + advantages - tf.reduce_mean(advantages, axis=-1, keep_dims=True)
-  scores = tf.transpose(tf.reshape(bundled, (-1, n_ep, n_exp, 2)),
-      perm=(1,2,0,3), name="qvals") # batch x trace x intersection x 2
-  tf.summary.histogram("advantage0", advantages[:,0])
-  tf.summary.histogram("advantage1", advantages[:,1])
+  true_advantage = advantages - tf.reduce_mean(advantages, axis=-1, keep_dims=True)
+  bundled = values + true_advantage
+  # (b x trace) x (inter x 2)
+  scores = tf.reshape(bundled, [n_ep, n_exp, intersections, 2], name="qvals")
+  # b x trace x inter x 2
+  advantage_hist = tf.reshape(true_advantage, [-1, 2])
+  tf.summary.histogram("advantage0", advantage_hist[:,0])
+  tf.summary.histogram("advantage1", advantage_hist[:,1])
   softmax_decision(scores, temp) 
 
 def random_trace(n_exp, p):
@@ -127,12 +136,11 @@ def epoch(sess, env, cmd):
     if done: break
     obs = new_obs
 
-def train_model(sess, dbg, writer, save, save_best, env):
+def train_model(sess, dbg, writer, save, env):
   episode_num, step = sess.run(["episode_num:0", "global_step:0"])
   fd = {'n_exp:0': FLAGS.trace_size, 'n_ep:0': FLAGS.batch_size}
   sess.run("update_chooser")
   sess.run("update_target")
-  best_threshold = FLAGS.best_threshold
   try:
     while FLAGS.total_episodes is None or episode_num < FLAGS.total_episodes:
       episode_num = sess.run("episode_num:0")
@@ -156,10 +164,8 @@ def train_model(sess, dbg, writer, save, save_best, env):
           print("Reward", rew)
           smry = sess.run("avg_r_summary:0", feed_dict={"avg_r:0":rew})
           writer.add_summary(smry, global_step=step)
-          if best_threshold < rew:
-            save_best(global_step=step)
-            best_threshold = rew
         if episode_num % FLAGS.save_rate == 0:
+          print("SAVED!")
           save(global_step=step)
   finally:
     save(global_step=step)

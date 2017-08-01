@@ -51,14 +51,12 @@ def handle_modes(env_f, model, val, train):
       else: summary_writer = tf.summary.FileWriter(FLAGS.logdir, tf.get_default_graph())
       saver = tf.train.Saver()
       model_file = os.path.join(FLAGS.logdir, 'model.ckpt')
-      best_file = os.path.join(FLAGS.logdir, 'best.ckpt')
       if FLAGS.debug:
         from tensorflow.python import debug as tf_debug
         dbg = tf_debug.LocalCLIDebugWrapperSession(sess)
         dbg.add_tensor_filter("has_inf_or_nan", tf_debug.has_inf_or_nan)
       else: dbg = sess
-      train(sess, dbg, summary_writer, partial(saver.save, sess, model_file),
-          partial(saver.save, sess, best_file), env)
+      train(sess, dbg, summary_writer, partial(saver.save, sess, model_file), env)
 
 def remkdir(d):
   if tf.gfile.Exists(d): tf.gfile.DeleteRecursively(d)

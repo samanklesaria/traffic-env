@@ -8,10 +8,10 @@ import time
 import math
 from args import FLAGS, add_argument
 
-add_argument('--local_cars_per_sec', 0.12, type=float)
+add_argument('--local_cars_per_sec', 0.1, type=float)
 add_argument('--rate', 0.5, type=float)
 add_argument('--poisson',True, type=bool)
-add_argument('--entry', 'random')
+add_argument('--entry', 'all')
 add_argument('--learn_switch', False, type=bool)
 
 # Python attribute access is expensive. We hardcode these params
@@ -106,7 +106,7 @@ def advance_finished_cars(dests,length,nexts,state,leading,lastcar,
       else:
         triptime = tick - state[e,ti,newlead]
         trip_times[trip_ix[0]] = triptime
-        rewards[0] += (1 / triptime**2)
+        rewards[0] += (1 / triptime)
         trip_ix[0] += 1
         if trip_ix[0] >= TRIP_BUFFER:
           trip_ix[0] = 0
@@ -167,6 +167,7 @@ class TrafficEnv(gym.Env):
   metadata = {'render.modes': ['human']}
 
   def _step(self, action):
+    self.rewards = np.zeros(1, dtype=np.float32)
     self.elapsed += 1 
     if self.steps > 0:
       change = np.logical_xor(self.current_phase, action).astype(np.int32) 
@@ -181,7 +182,8 @@ class TrafficEnv(gym.Env):
     self.steps += 1
     overflowed |= advance_finished_cars(self.graph.dest, self.graph.len, self.graph.nexts, self.state,
       self.leading,self.lastcar,self.trip_times, self.rewards, self.trip_ix, self.steps)
-    return self.obs, self.rewards[0], bool(overflowed), None
+    self.overflowed = bool(overflowed)
+    return self.obs, self.rewards[0] - (np.float(overflowed) * 2), self.overflowed, None
 
   def seed_generator(self, seed=None):
     self.rand = np.random.RandomState(seed)
@@ -201,9 +203,9 @@ class TrafficEnv(gym.Env):
     self.elapsed[:] = 0
     self.leading[:] = 1
     self.lastcar[:] = 1
-    self.rewards = np.zeros(1, dtype=np.float32)
-    # self.current_phase[:] = self.action_space.sample()
+    # self.current_phase[:] = 0 # self.action_space.sample()
     self.trip_ix = np.zeros(2, dtype=np.int32)
+    self.overflowed = False
     return self.obs
 
   def add_new_cars(self, tick):

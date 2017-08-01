@@ -14,6 +14,7 @@ def print_running_stats(iterator):
   trip_times = []
   light_times = []
   unfinished = []
+  overflowed = 0
   try:
     reward_mean = 0
     reward_var = 0
@@ -29,9 +30,10 @@ def print_running_stats(iterator):
         trip_times.extend(info['trip_times'])
         light_times.extend(info['light_times'])
         unfinished.append(info['unfinished'])
+        overflowed += int(info['overflowed'])
   except KeyboardInterrupt:
     print("Interrupted")
-    return (light_times, trip_times, unfinished)
+    return (light_times, trip_times, unfinished, overflowed / iterations)
 
 def make_subplot(ax, data):
   ax.hist(data, color='c')
@@ -58,12 +60,13 @@ def write_data(light_times, trip_times, unfinished):
   np.save("trip_times.npy", trip_times)
   np.save("unfinished.npy", unfinished)
 
-def display_data(light_times, trip_times, unfinished):
+def display_data(light_times, trip_times, unfinished, overflowed):
   make_plot(light_times, trip_times, unfinished)
   plt.show()
   print("Light times mean %2f, mode %2f, std %2f" % (np.mean(light_times), stats.mode(light_times, axis=None).mode, np.std(light_times)))
   print("Trip times mean %2f, mode %2f, std %2f" % (np.mean(trip_times), stats.mode(trip_times, axis=None).mode, np.std(trip_times)))
   print("Unfinished mean %2f, mode %2f, std %2f" % (np.mean(unfinished), stats.mode(unfinished, axis=None).mode, np.std(unfinished)))
+  print("Overflowed:", overflowed)
 
 def episode_reward(env, gen):
   num_0s = 0
@@ -78,11 +81,13 @@ def episode_reward(env, gen):
       light_times.extend(info['light_times'])
       nz = np.count_nonzero(a)
       num_1s += nz
-      num_0s += (len(a) - nz)
+      num_0s += (a.size - nz)
+      assert num_1s + num_0s
   if FLAGS.mode == 'validate':
     total_actions = num_1s + num_0s
     info_struct = {'zerop': num_0s / total_actions, 'light_times': light_times,
       'onep': num_1s / total_actions, 'trip_times': env.unwrapped.triptimes(),
+      'overflowed': env.unwrapped.overflowed,
       'unfinished': np.sum(env.unwrapped.cars_on_roads())}
   else: info_struct = None
   return (reward, info_struct)

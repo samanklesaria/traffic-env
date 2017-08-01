@@ -9,7 +9,7 @@ from alg_flags import run_alg
 
 add_argument('--episode_secs', 600, type=int)
 add_argument('--light_secs', 5, type=int)
-add_argument('--warmup_lights', 10, type=int)
+add_argument('--warmup_lights', 5, type=int)
 add_argument('--obs_rate', 5, type=int)
 
 def secs_derivations():
@@ -40,7 +40,6 @@ class Repeater(gym.Wrapper):
         light_dist_secs = light_dist.astype(np.float32) * FLAGS.rate
         change_times = light_dist_secs[np.nonzero(light_dist_secs)]
       info = {'light_times': change_times}
-      print("Times", change_times)
     else: info = None
     obs_modulus = FLAGS.light_iterations // FLAGS.obs_rate
     for it in range(FLAGS.light_iterations):
