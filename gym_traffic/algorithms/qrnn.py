@@ -2,6 +2,10 @@ import tensorflow as tf
 import tensorflow.contrib.rnn as rnn
 from gym_traffic.algorithms.util import *
 
+# this is still sucking
+# how can we debug?
+# or should we just do the baselines approach now?
+
 def build_net(env, temp, n_ep, n_exp, observations, lens):
   # b x trace x inter x feat
   intersections, features = env.observation_space.shape
