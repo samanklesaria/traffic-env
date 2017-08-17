@@ -1,5 +1,5 @@
 import gym
-from gym_traffic.spaces.gspace import GSpace
+from gym.spaces import Box
 import numpy as np
 from numba import jit, void, float64, float32, int32, uint32, boolean
 import numba
@@ -301,11 +301,11 @@ class TrafficEnv(gym.Env):
     self.state = np.empty((graph.roads, params, CAPACITY), dtype=np.float32)
     self.leading = np.empty(graph.roads, dtype=np.int32)
     self.lastcar = np.empty(graph.roads, dtype=np.int32)
-    self.action_space = GSpace([graph.intersections], np.int32(2))
+    self.action_space = Box(0, 1, shape=graph.intersections)
     r = graph.train_roads
     i = graph.intersections
     obs_shape = [r+2*i]
-    self.observation_space = GSpace(obs_shape, np.int32(1))
+    self.observation_space = Box(0, 1, shape=obs_shape) # not accurate- does it matter?
     self.obs = np.zeros(obs_shape, dtype=np.int32)
     self.detected = self.obs[:r]
     self.current_phase = self.obs[r:r+i]

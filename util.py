@@ -53,12 +53,16 @@ def make_plot(light_times, trip_times, unfinished):
   ax.set_title("Unfinished")
   make_subplot(ax, unfinished)
 
-def write_data(light_times, trip_times, unfinished):
+def write_data(light_times, trip_times, unfinished, overflowed):
   make_plot(light_times, trip_times, unfinished)
   plt.savefig('hist.png')
   np.save("light_times.npy", light_times)
   np.save("trip_times.npy", trip_times)
   np.save("unfinished.npy", unfinished)
+  print("Light times mean %2f, mode %2f, std %2f" % (np.mean(light_times), stats.mode(light_times, axis=None).mode, np.std(light_times)))
+  print("Trip times mean %2f, mode %2f, std %2f" % (np.mean(trip_times), stats.mode(trip_times, axis=None).mode, np.std(trip_times)))
+  print("Unfinished mean %2f, mode %2f, std %2f" % (np.mean(unfinished), stats.mode(unfinished, axis=None).mode, np.std(unfinished)))
+  print("Overflowed:", overflowed)
 
 def display_data(light_times, trip_times, unfinished, overflowed):
   make_plot(light_times, trip_times, unfinished)
