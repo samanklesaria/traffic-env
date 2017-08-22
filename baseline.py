@@ -11,11 +11,12 @@ import baselines.common.tf_util as U
 import numpy as np
 from util import *
 
-# We also don't have a maximum episode length for our baseline yet. 
-# How does that work exactly?
+# The only error we get is underflows
+# but shouldn't that generate 0, not nan?
+# where are the nans coming from?
+np.seterr(divide='raise', over='raise', invalid='raise')
 
 # It's just choosing 1 all the time. Something is wrong. 
-# Shouldn't that overflow?
 
 add_argument('--episode_secs', 600, type=int)
 add_argument('--light_secs', 5, type=int)
@@ -38,8 +39,10 @@ class Repeater(gym.Wrapper):
     self.observation_space = Box(0, 1, shape=self.shape)
   def _reset(self):
     super(Repeater, self)._reset()
+    self.counter = 0
     return np.zeros(self.shape)
   def _step(self, action):
+    self.counter += 1
     done = False
     total_reward = 0
     detected = np.zeros((FLAGS.obs_rate, self.r), dtype=np.float32)
@@ -64,10 +67,17 @@ class Repeater(gym.Wrapper):
     reshaped = detected.reshape(FLAGS.obs_rate, self.i, 4)
     for_conv = reshaped.transpose((1, 0, 2)).reshape(self.i, -1)
     total_obs = np.concatenate((for_conv, elapsed_phase[:,None]), 1)
+    total_reward += 1 / (np.sum(np.square(self.env.cars_on_roads())) + 1)
+    done |= self.counter == FLAGS.episode_len
+    assert self.counter < FLAGS.episode_len + 1
     return total_obs.reshape(-1), total_reward, done, info
 
 def model(name, ob_space, ac_space):
   return MlpPolicy(name, ob_space, ac_space, 30, 3)
+
+
+# let's try 1x1 again?
+# this model doesn't share anything. We've made better.
 
 def saver(lcls, glbs):
   iters = lcls['iters_so_far']
@@ -77,22 +87,10 @@ def saver(lcls, glbs):
 # Adapt to use tensorboard
 # Shall we adapt it to use a cnn?
 # why did everything become nan?
-# Is this writing summary files too?
 # What does the bench.Monitor stuff do?
-# Oh dang, there's the other algs. Will the work in this context? Can you make interactive work?
 
 # What exactly is max_timesteps doing?
 # Ensure that you fully understand the alg
-
-def epoch(act, env):
-  env.unwrapped.reset_entrypoints()
-  obs = env.reset()
-  for t in range(FLAGS.episode_len):
-    a = act(True, obs)[0]
-    new_obs, reward, done,info = env.step(a)
-    yield t,obs,a,reward,info,new_obs,done
-    if done: break
-    obs = new_obs
 
 def run():
   args.parse_flags()
@@ -107,19 +105,64 @@ def run():
     sess.__enter__()
     pposgd.learn(env, model, callback=saver,
         timesteps_per_batch=256, clip_param=0.2,
-        max_timesteps=FLAGS.episode_len * 800,
-        entcoeff=0.01, optim_epochs=10, optim_stepsize=1e-3,
+        max_timesteps=FLAGS.episode_len * 10000,
+        entcoeff=0.01, optim_epochs=30, optim_stepsize=1e-3,
         optim_batchsize=64, gamma=0.99, lam=0.95, schedule='linear')
     U.save_state(SAVE_LOC)
+  elif FLAGS.mode == 'const0':
+    ones = np.ones(env.action_space.shape)
+    def episode():
+      env.unwrapped.reset_entrypoints()
+      env.reset()
+      for i in range(FLAGS.episode_len):
+        o,r,d,info = env.step(ones)
+        yield i,o,ones,r,info
+        if d: break
+    analyze(env, episode)
+  elif FLAGS.mode == 'const1':
+    zeros = np.zeros(env.action_space.shape)
+    def episode():
+      env.unwrapped.reset_entrypoints()
+      env.reset()
+      for i in range(FLAGS.episode_len):
+        o,r,d,info = env.step(zeros)
+        yield i,o,ones,r,info
+        if d: break
+    analyze(env, episode)
+  elif FLAGS.mode == 'fixed':
+    def phase(i):
+      return int((i % (FLAGS.spacing * 2)) >= FLAGS.spacing)
+    actions = np.zeros((2, *env.action_space.shape))
+    actions[1,:] = 1
+    def episode():
+      env.unwrapped.reset_entrypoints()
+      env.reset()
+      for i in range(FLAGS.episode_len):
+        a = actions[phase(i)]
+        o,r,d,info = env.step(a)
+        yield i,o,a,r,info
+        if d: break
+    analyze(env, episode)
   elif FLAGS.mode == 'validate':
     act = model("pi", env.observation_space, env.action_space).act
     sess = U.make_session(num_cpu=1)
     sess.__enter__()
     state = U.load_state(SAVE_LOC)
-    data = print_running_stats(forever(lambda:
-      episode_reward(env, epoch(act, env))))
-    if FLAGS.interactive: return data
-    write_data(*data)
-    
+    def episode():
+      env.unwrapped.reset_entrypoints()
+      obs = env.reset()
+      for t in range(FLAGS.episode_len):
+        a = act(True, obs)[0]
+        new_obs, reward, done,info = env.step(a)
+        yield t,obs,a,reward,info,new_obs,done
+        if done: break
+        obs = new_obs
+    analyze(env, episode)
+
+def analyze(env, g):
+  data = print_running_stats(forever(lambda: episode_reward(env, g())))
+  if FLAGS.interactive: return data
+  write_data(*data)
+
 if __name__ == '__main__':
   run()
