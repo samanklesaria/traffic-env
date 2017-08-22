@@ -8,13 +8,20 @@ from args import FLAGS, add_argument
 import args
 import alg_flags
 import baselines.common.tf_util as U
+import tensorflow as tf
+from baselines.common.distributions import make_pdtype
+from baselines.common.mpi_running_mean_std import RunningMeanStd
 import numpy as np
 from util import *
+
+# The restored reward is significantly less than it should be.
+# The saved mean was 1.9, but we're only seeing 1.1.
+# Unless the saved mean was not using gamma
 
 # The only error we get is underflows
 # but shouldn't that generate 0, not nan?
 # where are the nans coming from?
-np.seterr(divide='raise', over='raise', invalid='raise')
+# np.seterr(divide='raise', over='raise', invalid='raise')
 
 # It's just choosing 1 all the time. Something is wrong. 
 
@@ -35,7 +42,7 @@ class Repeater(gym.Wrapper):
     super(Repeater, self).__init__(env)
     self.r = self.unwrapped.graph.train_roads
     self.i = self.unwrapped.graph.intersections
-    self.shape = self.i * (FLAGS.obs_rate * 4 + 1)
+    self.shape = [self.i, (FLAGS.obs_rate * 4 + 1)]
     self.observation_space = Box(0, 1, shape=self.shape)
   def _reset(self):
     super(Repeater, self)._reset()
@@ -47,7 +54,7 @@ class Repeater(gym.Wrapper):
     total_reward = 0
     detected = np.zeros((FLAGS.obs_rate, self.r), dtype=np.float32)
     elapsed_phase = np.zeros(self.i, dtype=np.float32)
-    if FLAGS.mode == 'validate':
+    if FLAGS.mode != 'train':
       if self.env.steps == 0: change_times = []
       else:
         change = np.logical_xor(self.env.current_phase, action).astype(np.int32) 
@@ -70,14 +77,56 @@ class Repeater(gym.Wrapper):
     total_reward += 1 / (np.sum(np.square(self.env.cars_on_roads())) + 1)
     done |= self.counter == FLAGS.episode_len
     assert self.counter < FLAGS.episode_len + 1
-    return total_obs.reshape(-1), total_reward, done, info
+    return total_obs, total_reward, done, info
+
+# Right- let's build a model with shared parameters.
+# We'll use the batch as the intersection
+# start without recurrence, add recurrence later
+
+class MyModel:
+  recurrent = False
+  def __init__(self, name, ob_space, ac_space):
+    intersections, features = ob_space.shape
+    with tf.variable_scope(name):
+      self.scope = tf.get_variable_scope().name
+      self.pdtype = pdtype = make_pdtype(ac_space)
+      ob = U.get_placeholder(name="ob", dtype=tf.float32, shape=[None, *ob_space.shape])
+      with tf.variable_scope("obfilter"):
+          self.ob_rms = RunningMeanStd(shape=ob_space.shape)
+      obz = tf.clip_by_value((ob - self.ob_rms.mean) / self.ob_rms.std, -5.0, 5.0)
+      robz = tf.reshape(obz, [-1, features])
+
+      last_out = robz
+      for i in range(3):
+        last_out = tf.nn.tanh(U.dense(last_out, 20, "vffc%i"%(i+1), weight_init=U.normc_initializer(1.0)))
+      last_out = tf.reshape(last_out, [-1, intersections * 20])
+      self.vpred = U.dense(last_out, 1, "vffinal", weight_init=U.normc_initializer(1.0))[:,0]
+
+      last_out = robz
+      for i in range(3):
+        last_out = tf.nn.tanh(U.dense(last_out, 15, "polfc%i"%(i+1), weight_init=U.normc_initializer(1.0)))
+      last_out = tf.reshape(last_out, [-1, intersections * 15])
+      pdparam = U.dense(last_out, pdtype.param_shape()[0], "polfinal", U.normc_initializer(0.01))
+      self.pd = pdtype.pdfromflat(pdparam)
+      self.state_in = []
+      self.state_out = []
+
+      stochastic = tf.placeholder(dtype=tf.bool, shape=())
+      ac = U.switch(stochastic, self.pd.sample(), self.pd.mode())
+      self._act = U.function([stochastic, ob], [ac, self.vpred])
+
+  def act(self, stochastic, ob):
+      ac1, vpred1 =  self._act(stochastic, ob[None])
+      return ac1[0], vpred1[0]
+  def get_variables(self):
+      return tf.get_collection(tf.GraphKeys.VARIABLES, self.scope)
+  def get_trainable_variables(self):
+      return tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, self.scope)
+  def get_initial_state(self):
+      return []
 
 def model(name, ob_space, ac_space):
-  return MlpPolicy(name, ob_space, ac_space, 30, 3)
-
-
-# let's try 1x1 again?
-# this model doesn't share anything. We've made better.
+  return MyModel(name, ob_space, ac_space)
 
 def saver(lcls, glbs):
   iters = lcls['iters_so_far']
@@ -107,10 +156,10 @@ def run():
         timesteps_per_batch=256, clip_param=0.2,
         max_timesteps=FLAGS.episode_len * 10000,
         entcoeff=0.01, optim_epochs=30, optim_stepsize=1e-3,
-        optim_batchsize=64, gamma=0.99, lam=0.95, schedule='linear')
+        optim_batchsize=128, gamma=0.99, lam=0.95, schedule='linear')
     U.save_state(SAVE_LOC)
   elif FLAGS.mode == 'const0':
-    ones = np.ones(env.action_space.shape)
+    ones = np.ones(env.action_space.n)
     def episode():
       env.unwrapped.reset_entrypoints()
       env.reset()
@@ -120,19 +169,19 @@ def run():
         if d: break
     analyze(env, episode)
   elif FLAGS.mode == 'const1':
-    zeros = np.zeros(env.action_space.shape)
+    zeros = np.zeros(env.action_space.n)
     def episode():
       env.unwrapped.reset_entrypoints()
       env.reset()
       for i in range(FLAGS.episode_len):
         o,r,d,info = env.step(zeros)
-        yield i,o,ones,r,info
+        yield i,o,zeros,r,info
         if d: break
     analyze(env, episode)
   elif FLAGS.mode == 'fixed':
     def phase(i):
       return int((i % (FLAGS.spacing * 2)) >= FLAGS.spacing)
-    actions = np.zeros((2, *env.action_space.shape))
+    actions = np.zeros((2, env.action_space.n))
     actions[1,:] = 1
     def episode():
       env.unwrapped.reset_entrypoints()

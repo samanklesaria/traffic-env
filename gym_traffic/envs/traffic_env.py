@@ -1,5 +1,5 @@
 import gym
-from gym.spaces import Box
+from gym.spaces import Box, MultiBinary
 import numpy as np
 from numba import jit, void, float64, float32, int32, uint32, boolean
 import numba
@@ -301,7 +301,7 @@ class TrafficEnv(gym.Env):
     self.state = np.empty((graph.roads, params, CAPACITY), dtype=np.float32)
     self.leading = np.empty(graph.roads, dtype=np.int32)
     self.lastcar = np.empty(graph.roads, dtype=np.int32)
-    self.action_space = Box(0, 1, shape=graph.intersections)
+    self.action_space = MultiBinary(graph.intersections)
     r = graph.train_roads
     i = graph.intersections
     obs_shape = [r+2*i]

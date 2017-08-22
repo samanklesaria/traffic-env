@@ -87,7 +87,7 @@ def episode_reward(env, gen):
       num_1s += nz
       num_0s += (a.size - nz)
       assert num_1s + num_0s
-  if FLAGS.mode == 'validate':
+  if FLAGS.mode != 'train':
     total_actions = num_1s + num_0s
     info_struct = {'zerop': num_0s / total_actions, 'light_times': light_times,
       'onep': num_1s / total_actions, 'trip_times': env.unwrapped.triptimes(),
