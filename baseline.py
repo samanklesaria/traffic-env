@@ -18,12 +18,19 @@ from util import *
 # The saved mean was 1.9, but we're only seeing 1.1.
 # Unless the saved mean was not using gamma
 
+# We should not printed discounted (for compatability sake)
+
+# We should investigate precicely how our model is failing.
+# Visualize the results
+
+# Let's add an rnn now?
+# Oh dear that's rather difficult. 
+# Let's just run it longer and read more papers
+
 # The only error we get is underflows
 # but shouldn't that generate 0, not nan?
 # where are the nans coming from?
 # np.seterr(divide='raise', over='raise', invalid='raise')
-
-# It's just choosing 1 all the time. Something is wrong. 
 
 add_argument('--episode_secs', 600, type=int)
 add_argument('--light_secs', 5, type=int)
@@ -153,8 +160,8 @@ def run():
     sess = U.make_session(num_cpu=4)
     sess.__enter__()
     pposgd.learn(env, model, callback=saver,
-        timesteps_per_batch=256, clip_param=0.2,
-        max_timesteps=FLAGS.episode_len * 10000,
+        timesteps_per_batch=512, clip_param=0.2,
+        max_timesteps=FLAGS.episode_len * 30000,
         entcoeff=0.01, optim_epochs=30, optim_stepsize=1e-3,
         optim_batchsize=128, gamma=0.99, lam=0.95, schedule='linear')
     U.save_state(SAVE_LOC)
@@ -194,7 +201,7 @@ def run():
     analyze(env, episode)
   elif FLAGS.mode == 'validate':
     act = model("pi", env.observation_space, env.action_space).act
-    sess = U.make_session(num_cpu=1)
+    sess = U.make_session(num_cpu=4)
     sess.__enter__()
     state = U.load_state(SAVE_LOC)
     def episode():
