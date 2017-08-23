@@ -34,10 +34,6 @@ add_argument('--total_episodes', None, type=int)
 add_argument('--best_threshold', 30.0, type=float)
 add_argument('--interactive', False, type=bool)
 
-def std_derivations():
-  if FLAGS.render: FLAGS.mode = 'validate'
-add_derivation(std_derivations)
-
 def run_alg(env_f):
   mod = importlib.import_module("gym_traffic.algorithms."+FLAGS.trainer)
   apply_derivations(PARSER) 

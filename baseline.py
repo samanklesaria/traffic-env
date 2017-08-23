@@ -14,23 +14,14 @@ from baselines.common.mpi_running_mean_std import RunningMeanStd
 import numpy as np
 from util import *
 
-# The restored reward is significantly less than it should be.
-# The saved mean was 1.9, but we're only seeing 1.1.
-# Unless the saved mean was not using gamma
-
 # We should not printed discounted (for compatability sake)
 
-# We should investigate precicely how our model is failing.
-# Visualize the results
+# Okay, let's add an rnn to this. 
 
-# Let's add an rnn now?
-# Oh dear that's rather difficult. 
-# Let's just run it longer and read more papers
+# Actually, it will be easier just to add some history.
+# Let's shrink the obs_rate down to 2
+# And store FLAGS.history extra observations
 
-# The only error we get is underflows
-# but shouldn't that generate 0, not nan?
-# where are the nans coming from?
-# np.seterr(divide='raise', over='raise', invalid='raise')
 
 add_argument('--episode_secs', 600, type=int)
 add_argument('--light_secs', 5, type=int)
@@ -155,6 +146,7 @@ def run():
   env.set_graph(GridRoad(3,3,250))
   env.seed_generator()
   env.reset_entrypoints()
+  if FLAGS.render: env.rendering = True
   env = Repeater(env)
   if FLAGS.mode == 'train':
     sess = U.make_session(num_cpu=4)
@@ -162,7 +154,7 @@ def run():
     pposgd.learn(env, model, callback=saver,
         timesteps_per_batch=512, clip_param=0.2,
         max_timesteps=FLAGS.episode_len * 30000,
-        entcoeff=0.01, optim_epochs=30, optim_stepsize=1e-3,
+        entcoeff=0.01, optim_epochs=30, optim_stepsize=5e-3,
         optim_batchsize=128, gamma=0.99, lam=0.95, schedule='linear')
     U.save_state(SAVE_LOC)
   elif FLAGS.mode == 'const0':
@@ -196,6 +188,7 @@ def run():
       for i in range(FLAGS.episode_len):
         a = actions[phase(i)]
         o,r,d,info = env.step(a)
+        # if FLAGS.render: print("Obs", o)
         yield i,o,a,r,info
         if d: break
     analyze(env, episode)
@@ -209,7 +202,9 @@ def run():
       obs = env.reset()
       for t in range(FLAGS.episode_len):
         a = act(True, obs)[0]
+        if FLAGS.render: print("Action:", a)
         new_obs, reward, done,info = env.step(a)
+        # if FLAGS.render: print("Obs", new_obs)
         yield t,obs,a,reward,info,new_obs,done
         if done: break
         obs = new_obs

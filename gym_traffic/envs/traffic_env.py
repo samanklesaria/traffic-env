@@ -9,7 +9,7 @@ import math
 from args import FLAGS, add_argument
 
 add_argument('--local_cars_per_sec', 0.1, type=float)
-add_argument('--rate', 0.5, type=float)
+add_argument('--rate', 0.5, type=float) # seconds per tick
 add_argument('--poisson',True, type=bool)
 add_argument('--entry', 'all')
 add_argument('--learn_switch', False, type=bool)
