@@ -14,6 +14,8 @@ from baselines.common.mpi_running_mean_std import RunningMeanStd
 import numpy as np
 from util import *
 
+# we should also try returning to a change/nochange scheme
+
 # We should not printed discounted (for compatability sake)
 
 # Okay, let's add an rnn to this. 
@@ -23,10 +25,14 @@ from util import *
 # And store FLAGS.history extra observations
 
 
+# why is he not learning?
+# let's simplify the network
+
 add_argument('--episode_secs', 600, type=int)
 add_argument('--light_secs', 5, type=int)
 add_argument('--warmup_lights', 5, type=int)
-add_argument('--obs_rate', 5, type=int)
+add_argument('--obs_rate', 2, type=int)
+add_argument('--hist_size', 6, type=int)
 SAVE_LOC = "baselined/saved"
 
 def secs_derivations():
@@ -40,11 +46,17 @@ class Repeater(gym.Wrapper):
     super(Repeater, self).__init__(env)
     self.r = self.unwrapped.graph.train_roads
     self.i = self.unwrapped.graph.intersections
-    self.shape = [self.i, (FLAGS.obs_rate * 4 + 1)]
+    self.obs_size = FLAGS.obs_rate * 4
+    self.hist_obs_size = FLAGS.hist_size * 4
+    # self.shape = [self.i, ((FLAGS.obs_rate + FLAGS.hist_size) * 4 + 1)]
+    self.shape = [self.i, 1]
     self.observation_space = Box(0, 1, shape=self.shape)
+    # self.history = np.zeros((self.i, self.hist_obs_size))
   def _reset(self):
     super(Repeater, self)._reset()
     self.counter = 0
+    # self.history[:] = 0
+    self.hc = 0
     return np.zeros(self.shape)
   def _step(self, action):
     self.counter += 1
@@ -71,15 +83,18 @@ class Repeater(gym.Wrapper):
     elapsed_phase = obs[-self.i:] / 100 * multiplier 
     reshaped = detected.reshape(FLAGS.obs_rate, self.i, 4)
     for_conv = reshaped.transpose((1, 0, 2)).reshape(self.i, -1)
-    total_obs = np.concatenate((for_conv, elapsed_phase[:,None]), 1)
+    total_obs = elapsed_phase[:,None]
+    # total_obs = np.concatenate((for_conv, self.history, elapsed_phase[:,None]), 1)
+    # self.history[:, self.hc : self.hc + self.obs_size] = for_conv
+    # self.hc += self.obs_size
+    # if self.hc + self.obs_size > self.hist_obs_size: self.hc = 0
     total_reward += 1 / (np.sum(np.square(self.env.cars_on_roads())) + 1)
     done |= self.counter == FLAGS.episode_len
-    assert self.counter < FLAGS.episode_len + 1
+    # assert self.counter < FLAGS.episode_len + 1
     return total_obs, total_reward, done, info
 
-# Right- let's build a model with shared parameters.
-# We'll use the batch as the intersection
-# start without recurrence, add recurrence later
+
+# Something is going wrong we should learn the constant function. But on 3x3 we don't.
 
 class MyModel:
   recurrent = False
@@ -91,20 +106,33 @@ class MyModel:
       ob = U.get_placeholder(name="ob", dtype=tf.float32, shape=[None, *ob_space.shape])
       with tf.variable_scope("obfilter"):
           self.ob_rms = RunningMeanStd(shape=ob_space.shape)
-      obz = tf.clip_by_value((ob - self.ob_rms.mean) / self.ob_rms.std, -5.0, 5.0)
-      robz = tf.reshape(obz, [-1, features])
-
-      last_out = robz
+      # obz = tf.clip_by_value((ob - self.ob_rms.mean) / self.ob_rms.std, -5.0, 5.0)
+      obz = ob
+      
+      obzr = tf.reshape(obz, [-1, np.prod(ob_space.shape)])
+      last_out = obzr
       for i in range(3):
-        last_out = tf.nn.tanh(U.dense(last_out, 20, "vffc%i"%(i+1), weight_init=U.normc_initializer(1.0)))
-      last_out = tf.reshape(last_out, [-1, intersections * 20])
+        last_out = tf.nn.tanh(U.dense(last_out, 5, "vffc%i"%(i+1), weight_init=U.normc_initializer(1.0)))
       self.vpred = U.dense(last_out, 1, "vffinal", weight_init=U.normc_initializer(1.0))[:,0]
-
-      last_out = robz
-      for i in range(3):
-        last_out = tf.nn.tanh(U.dense(last_out, 15, "polfc%i"%(i+1), weight_init=U.normc_initializer(1.0)))
-      last_out = tf.reshape(last_out, [-1, intersections * 15])
+      last_out = obzr
+      for i in range(2):
+        last_out = tf.nn.tanh(U.dense(last_out, 5, "polfc%i"%(i+1), weight_init=U.normc_initializer(1.0)))
       pdparam = U.dense(last_out, pdtype.param_shape()[0], "polfinal", U.normc_initializer(0.01))
+
+      # robz = tf.reshape(obz, [-1, features])
+      #
+      # last_out = robz
+      # for i in range(3):
+      #   last_out = tf.nn.tanh(U.dense(last_out, 30, "vffc%i"%(i+1), weight_init=U.normc_initializer(1.0)))
+      # last_out = tf.reshape(last_out, [-1, intersections * 30])
+      # self.vpred = U.dense(last_out, 1, "vffinal", weight_init=U.normc_initializer(1.0))[:,0]
+      #
+      # last_out = robz
+      # for i in range(3):
+      #   last_out = tf.nn.tanh(U.dense(last_out, 30, "polfc%i"%(i+1), weight_init=U.normc_initializer(1.0)))
+      # last_out = tf.reshape(last_out, [-1, intersections * 30])
+      # pdparam = U.dense(last_out, pdtype.param_shape()[0], "polfinal", U.normc_initializer(0.01))
+
       self.pd = pdtype.pdfromflat(pdparam)
       self.state_in = []
       self.state_out = []
@@ -139,6 +167,9 @@ def saver(lcls, glbs):
 # What exactly is max_timesteps doing?
 # Ensure that you fully understand the alg
 
+# What about showing the prob dists per light?
+# Or showing the values of the weights and biases?
+
 def run():
   args.parse_flags()
   args.apply_derivations(args.PARSER) 
@@ -153,14 +184,17 @@ def run():
     sess.__enter__()
     pposgd.learn(env, model, callback=saver,
         timesteps_per_batch=512, clip_param=0.2,
-        max_timesteps=FLAGS.episode_len * 30000,
-        entcoeff=0.01, optim_epochs=30, optim_stepsize=5e-3,
-        optim_batchsize=128, gamma=0.99, lam=0.95, schedule='linear')
+        max_timesteps=FLAGS.episode_len * 800,
+        entcoeff=1e-6, optim_epochs=30, optim_stepsize=1e-3,
+        optim_batchsize=256, gamma=0.99, lam=0.95, schedule='linear')
     U.save_state(SAVE_LOC)
+    ws, bs = sess.run(["pi/polfinal/w:0", "pi/polfinal/b:0"])
+    print("Weights", ws)
+    print("Biases", bs)
   elif FLAGS.mode == 'const0':
     ones = np.ones(env.action_space.n)
     def episode():
-      env.unwrapped.reset_entrypoints()
+      # env.unwrapped.reset_entrypoints()
       env.reset()
       for i in range(FLAGS.episode_len):
         o,r,d,info = env.step(ones)
@@ -170,7 +204,7 @@ def run():
   elif FLAGS.mode == 'const1':
     zeros = np.zeros(env.action_space.n)
     def episode():
-      env.unwrapped.reset_entrypoints()
+      # env.unwrapped.reset_entrypoints()
       env.reset()
       for i in range(FLAGS.episode_len):
         o,r,d,info = env.step(zeros)
@@ -188,7 +222,7 @@ def run():
       for i in range(FLAGS.episode_len):
         a = actions[phase(i)]
         o,r,d,info = env.step(a)
-        # if FLAGS.render: print("Obs", o)
+        if FLAGS.render: print("Obs", o)
         yield i,o,a,r,info
         if d: break
     analyze(env, episode)
@@ -197,14 +231,17 @@ def run():
     sess = U.make_session(num_cpu=4)
     sess.__enter__()
     state = U.load_state(SAVE_LOC)
+    ws, bs = sess.run(["pi/polfinal/w:0", "pi/polfinal/b:0"])
+    print("Weights", ws)
+    print("Biases", bs)
     def episode():
       env.unwrapped.reset_entrypoints()
       obs = env.reset()
       for t in range(FLAGS.episode_len):
-        a = act(True, obs)[0]
+        a = act(False, obs)[0]
         if FLAGS.render: print("Action:", a)
         new_obs, reward, done,info = env.step(a)
-        # if FLAGS.render: print("Obs", new_obs)
+        if FLAGS.render: print("Obs", new_obs)
         yield t,obs,a,reward,info,new_obs,done
         if done: break
         obs = new_obs
