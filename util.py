@@ -1,7 +1,6 @@
 from itertools import count
 import math
 import numpy as np
-from args import FLAGS
 import matplotlib.pyplot as plt
 import scipy.stats as stats
 
@@ -41,7 +40,7 @@ def make_subplot(ax, data):
 
 def make_plot(light_times, trip_times, unfinished):
   fig = plt.figure()
-  fig.suptitle("Stats for " + FLAGS.trainer, fontweight='bold', fontsize=14)
+  fig.suptitle("Stats", fontweight='bold', fontsize=14)
   fig.subplots_adjust(hspace=0.5)
   ax = fig.add_subplot(311)
   ax.set_title("Light Times")
@@ -76,23 +75,17 @@ def episode_reward(env, gen):
   num_0s = 0
   num_1s = 0
   reward = 0.0
-  multiplier = 1.0
   light_times = []
   for (i,_,a,r,info,*_) in gen:
-    reward += r * multiplier 
-    multiplier *= FLAGS.gamma
-    if info:
-      light_times.extend(info['light_times'])
-      nz = np.count_nonzero(a)
-      num_1s += nz
-      num_0s += (a.size - nz)
-
-  if FLAGS.mode != 'train':
-    total_actions = num_1s + num_0s
-    info_struct = {'zerop': num_0s / total_actions, 'light_times': light_times,
-      'onep': num_1s / total_actions, 'trip_times': env.unwrapped.triptimes(),
-      'overflowed': env.unwrapped.overflowed,
-      'unfinished': np.sum(env.unwrapped.cars_on_roads())}
-  else: info_struct = None
+    reward += r 
+    light_times.extend(info['light_times'])
+    nz = np.count_nonzero(a)
+    num_1s += nz
+    num_0s += (a.size - nz)
+  total_actions = num_1s + num_0s
+  info_struct = {'zerop': num_0s / total_actions, 'light_times': light_times,
+    'onep': num_1s / total_actions, 'trip_times': env.unwrapped.triptimes(),
+    'overflowed': env.unwrapped.overflowed,
+    'unfinished': np.sum(env.unwrapped.cars_on_roads())}
   return (reward, info_struct)
 

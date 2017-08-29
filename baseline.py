@@ -2,99 +2,107 @@ import gym
 from gym.spaces import Box
 import gym_traffic
 from gym_traffic.envs.roadgraph import GridRoad
+from gym_traffic.envs.traffic_env import RATE
 import baselines.pposgd.pposgd_simple as pposgd
 from baselines.pposgd.mlp_policy import MlpPolicy
-from args import FLAGS, add_argument
-import args
-import alg_flags
 import baselines.common.tf_util as U
 import tensorflow as tf
 from baselines.common.distributions import make_pdtype
 from baselines.common.mpi_running_mean_std import RunningMeanStd
 import numpy as np
 from util import *
+import argparse
 
-# we should also try returning to a change/nochange scheme
+# replicate fixed in 1x1
+# add asymmetric flow functionality (arbitrary probs)
 
-# We should not printed discounted (for compatability sake)
+# Try another layer with weight sharing
+# Get it to work for constant flow on 3x3
+# Get it to learn fixed switching for symmetric flow on 1x1
+# Get it to learn fixed switching for symmetric flow on 3x3
+# Add loop detectors. Ensure performance doesn't drop
+# Shoehorn in an rnn if you can
 
-# Okay, let's add an rnn to this. 
+# should also examine why stochastic action sucks (never more than 7/3 split)
 
-# Actually, it will be easier just to add some history.
-# Let's shrink the obs_rate down to 2
-# And store FLAGS.history extra observations
+# Adapt to use tensorboard
 
+# we could do weight sharing again. 
+# the last layer is currently taking all nodes into account. we could do it separately
 
-# why is he not learning?
-# let's simplify the network
+# Eventually we need to have shape [intersections, 3 + (4 * obs_rate)]
 
-add_argument('--episode_secs', 600, type=int)
-add_argument('--light_secs', 5, type=int)
-add_argument('--warmup_lights', 5, type=int)
-add_argument('--obs_rate', 2, type=int)
-add_argument('--hist_size', 6, type=int)
+# Review the operation of the alg, ensure that we are going through enough episodes
+
+WARMUP_LIGHTS = 10
+OBS_RATE = 2
+LIGHT_SECS = 5
+EPISODE_LIGHTS = 100
+SPACING = 3
 SAVE_LOC = "baselined/saved"
 
-def secs_derivations():
-  FLAGS.episode_len = int(FLAGS.episode_secs / FLAGS.light_secs)
-  FLAGS.light_iterations = int(FLAGS.light_secs / FLAGS.rate)
-  FLAGS.episode_ticks = int(FLAGS.episode_secs / FLAGS.rate)
-args.add_derivation(secs_derivations)
+LIGHT_TICKS = int(LIGHT_SECS // RATE)
+EPISODE_TICKS = int(EPISODE_LIGHTS * LIGHT_TICKS)
+OBS_MOD = int(LIGHT_TICKS // OBS_RATE)
+
+def elapsed_phases(obs, i):
+  phase = obs[-2*i:-i]
+  not_phase = 1 - phase
+  return np.stack((obs[-i:] / 50, phase, not_phase), -1)
 
 class Repeater(gym.Wrapper):
   def __init__(self, env):
     super(Repeater, self).__init__(env)
     self.r = self.unwrapped.graph.train_roads
     self.i = self.unwrapped.graph.intersections
-    self.obs_size = FLAGS.obs_rate * 4
-    self.hist_obs_size = FLAGS.hist_size * 4
-    # self.shape = [self.i, ((FLAGS.obs_rate + FLAGS.hist_size) * 4 + 1)]
-    self.shape = [self.i, 1]
+    self.shape = [self.i, 3]
     self.observation_space = Box(0, 1, shape=self.shape)
-    # self.history = np.zeros((self.i, self.hist_obs_size))
+    self.zeros = np.zeros(self.i)
+
   def _reset(self):
     super(Repeater, self)._reset()
     self.counter = 0
-    # self.history[:] = 0
-    self.hc = 0
-    return np.zeros(self.shape)
+    rendering = self.env.rendering
+    self.env.rendering = False
+    i = 0
+    while i < WARMUP_LIGHTS:
+      i += 1
+      obs, _, done, _ = self.env.step(self.env.action_space.sample())
+      for j in range(LIGHT_TICKS - 1):
+        if done: break
+        obs, _, done, _ = self.env.step(self.zeros)
+      if done:
+        print("Overflowed in warmup, trying again")
+        self.env.reset()
+        i = 0
+    self.env.rendering = rendering
+    return elapsed_phases(obs, self.i)
+
   def _step(self, action):
     self.counter += 1
     done = False
     total_reward = 0
-    detected = np.zeros((FLAGS.obs_rate, self.r), dtype=np.float32)
-    elapsed_phase = np.zeros(self.i, dtype=np.float32)
-    if FLAGS.mode != 'train':
+    detected = np.zeros((OBS_RATE, self.r), dtype=np.float32)
+    if not self.env.training:
       if self.env.steps == 0: change_times = []
       else:
-        change = np.logical_xor(self.env.current_phase, action).astype(np.int32) 
-        light_dist = (self.env.elapsed + 1) * change.astype(np.int32)
-        light_dist_secs = light_dist.astype(np.float32) * FLAGS.rate
+        light_dist = (self.env.elapsed + 1) * action.astype(np.int32)
+        light_dist_secs = light_dist.astype(np.float32) * RATE
         change_times = light_dist_secs[np.nonzero(light_dist_secs)]
       info = {'light_times': change_times}
     else: info = None
-    obs_modulus = FLAGS.light_iterations // FLAGS.obs_rate
-    for it in range(FLAGS.light_iterations):
-      obs, reward, done, _ = self.env.step(action)
+    for it in range(LIGHT_TICKS - 1):
+      obs, reward, done, _ = self.env.step(self.zeros if it > 0 else action)
       total_reward += reward
+      detected[(it+1) // OBS_MOD] += obs[:self.r]
       if done: break
-      detected[it // obs_modulus] += obs[:self.r]
-    multiplier = 2 * obs[-2*self.i:-self.i] - 1
-    elapsed_phase = obs[-self.i:] / 100 * multiplier 
-    reshaped = detected.reshape(FLAGS.obs_rate, self.i, 4)
-    for_conv = reshaped.transpose((1, 0, 2)).reshape(self.i, -1)
-    total_obs = elapsed_phase[:,None]
-    # total_obs = np.concatenate((for_conv, self.history, elapsed_phase[:,None]), 1)
-    # self.history[:, self.hc : self.hc + self.obs_size] = for_conv
-    # self.hc += self.obs_size
-    # if self.hc + self.obs_size > self.hist_obs_size: self.hc = 0
+    # reshaped = detected.reshape(OBS_RATE, self.i, 4)
+    # for_conv = reshaped.transpose((1, 0, 2)).reshape(self.i, -1)
+    # total_obs = np.concatenate((for_conv, elapsed_phases(obs, self.i)), axis=-1)
+    total_obs = elapsed_phases(obs, self.i)
     total_reward += 1 / (np.sum(np.square(self.env.cars_on_roads())) + 1)
-    done |= self.counter == FLAGS.episode_len
-    # assert self.counter < FLAGS.episode_len + 1
+    done |= self.counter == EPISODE_LIGHTS
     return total_obs, total_reward, done, info
-
-
-# Something is going wrong we should learn the constant function. But on 3x3 we don't.
 
 class MyModel:
   recurrent = False
@@ -111,12 +119,12 @@ class MyModel:
       
       obzr = tf.reshape(obz, [-1, np.prod(ob_space.shape)])
       last_out = obzr
-      for i in range(3):
-        last_out = tf.nn.tanh(U.dense(last_out, 5, "vffc%i"%(i+1), weight_init=U.normc_initializer(1.0)))
+      for i in range(1):
+        last_out = tf.nn.tanh(U.dense(last_out, 8, "vffc%i"%(i+1), weight_init=U.normc_initializer(1.0)))
       self.vpred = U.dense(last_out, 1, "vffinal", weight_init=U.normc_initializer(1.0))[:,0]
       last_out = obzr
-      for i in range(2):
-        last_out = tf.nn.tanh(U.dense(last_out, 5, "polfc%i"%(i+1), weight_init=U.normc_initializer(1.0)))
+      for i in range(1):
+        last_out = tf.nn.tanh(U.dense(last_out, 8, "polfc%i"%(i+1), weight_init=U.normc_initializer(1.0)))
       pdparam = U.dense(last_out, pdtype.param_shape()[0], "polfinal", U.normc_initializer(0.01))
 
       # robz = tf.reshape(obz, [-1, features])
@@ -151,106 +159,87 @@ class MyModel:
   def get_initial_state(self):
       return []
 
-def model(name, ob_space, ac_space):
-  return MyModel(name, ob_space, ac_space)
-
 def saver(lcls, glbs):
   iters = lcls['iters_so_far']
   if iters > 0 and iters % 100 == 0:
     U.save_state(SAVE_LOC)
 
-# Adapt to use tensorboard
-# Shall we adapt it to use a cnn?
-# why did everything become nan?
-# What does the bench.Monitor stuff do?
-
-# What exactly is max_timesteps doing?
-# Ensure that you fully understand the alg
-
-# What about showing the prob dists per light?
-# Or showing the values of the weights and biases?
-
-def run():
-  args.parse_flags()
-  args.apply_derivations(args.PARSER) 
-  env = gym.make('traffic-v0')
-  env.set_graph(GridRoad(3,3,250))
-  env.seed_generator()
-  env.reset_entrypoints()
-  if FLAGS.render: env.rendering = True
+def run(env, mode, interactive):
   env = Repeater(env)
-  if FLAGS.mode == 'train':
+  if mode == 'train':
     sess = U.make_session(num_cpu=4)
     sess.__enter__()
-    pposgd.learn(env, model, callback=saver,
+    pposgd.learn(env, MyModel, callback=saver,
         timesteps_per_batch=512, clip_param=0.2,
-        max_timesteps=FLAGS.episode_len * 800,
+        max_timesteps=EPISODE_LIGHTS * 1000,
         entcoeff=1e-6, optim_epochs=30, optim_stepsize=1e-3,
         optim_batchsize=256, gamma=0.99, lam=0.95, schedule='linear')
     U.save_state(SAVE_LOC)
-    ws, bs = sess.run(["pi/polfinal/w:0", "pi/polfinal/b:0"])
-    print("Weights", ws)
-    print("Biases", bs)
-  elif FLAGS.mode == 'const0':
-    ones = np.ones(env.action_space.n)
+  elif mode == 'random':
     def episode():
-      # env.unwrapped.reset_entrypoints()
       env.reset()
-      for i in range(FLAGS.episode_len):
-        o,r,d,info = env.step(ones)
-        yield i,o,ones,r,info
+      for i in range(EPISODE_LIGHTS):
+        a = env.action_space.sample()
+        o,r,d,info = env.step(a)
+        yield i,o,a,r,info
         if d: break
-    analyze(env, episode)
-  elif FLAGS.mode == 'const1':
+    analyze(env, episode, interactive)
+  elif mode == 'const':
     zeros = np.zeros(env.action_space.n)
     def episode():
-      # env.unwrapped.reset_entrypoints()
       env.reset()
-      for i in range(FLAGS.episode_len):
-        o,r,d,info = env.step(zeros)
+      for i in range(EPISODE_LIGHTS):
+        action = env.unwrapped.current_phase
+        o,r,d,info = env.step(action)
         yield i,o,zeros,r,info
         if d: break
-    analyze(env, episode)
-  elif FLAGS.mode == 'fixed':
+    analyze(env, episode, interactive)
+  elif mode == 'fixed':
     def phase(i):
-      return int((i % (FLAGS.spacing * 2)) >= FLAGS.spacing)
+      return int((i % (SPACING * 2)) >= SPACING)
     actions = np.zeros((2, env.action_space.n))
     actions[1,:] = 1
     def episode():
-      env.unwrapped.reset_entrypoints()
       env.reset()
-      for i in range(FLAGS.episode_len):
-        a = actions[phase(i)]
+      for i in range(EPISODE_LIGHTS):
+        a = np.logical_xor(env.unwrapped.current_phase, actions[phase(i)]).astype(np.int32)
         o,r,d,info = env.step(a)
-        if FLAGS.render: print("Obs", o)
         yield i,o,a,r,info
         if d: break
-    analyze(env, episode)
-  elif FLAGS.mode == 'validate':
-    act = model("pi", env.observation_space, env.action_space).act
+    analyze(env, episode, interactive)
+  elif mode == 'validate':
+    act = MyModel("pi", env.observation_space, env.action_space).act
     sess = U.make_session(num_cpu=4)
     sess.__enter__()
     state = U.load_state(SAVE_LOC)
-    ws, bs = sess.run(["pi/polfinal/w:0", "pi/polfinal/b:0"])
-    print("Weights", ws)
-    print("Biases", bs)
     def episode():
-      env.unwrapped.reset_entrypoints()
       obs = env.reset()
-      for t in range(FLAGS.episode_len):
+      for t in range(EPISODE_LIGHTS):
         a = act(False, obs)[0]
-        if FLAGS.render: print("Action:", a)
+        if env.rendering: print("Action:", a)
         new_obs, reward, done,info = env.step(a)
-        if FLAGS.render: print("Obs", new_obs)
+        if env.rendering: print("Obs", new_obs)
         yield t,obs,a,reward,info,new_obs,done
         if done: break
         obs = new_obs
-    analyze(env, episode)
+    analyze(env, episode, interactive)
 
-def analyze(env, g):
+def analyze(env, g, interactive):
   data = print_running_stats(forever(lambda: episode_reward(env, g())))
-  if FLAGS.interactive: return data
+  if interactive: return data
   write_data(*data)
 
 if __name__ == '__main__':
-  run()
+  parser = argparse.ArgumentParser()
+  parser.add_argument("--entry", default='all')
+  parser.add_argument("--render", type=bool)
+  parser.add_argument("--interactive", type=bool)
+  parser.add_argument("--mode", default='train')
+  args = parser.parse_args()
+  env = gym.make('traffic-v0')
+  env.set_graph(GridRoad(1,1,250))
+  env.seed_generator()
+  env.reset_entrypoints(args.entry)
+  env.rendering = args.render
+  env.training = args.mode == 'train'
+  run(env, args.mode, args.interactive)

@@ -6,15 +6,9 @@ import numba
 import itertools
 import time
 import math
-from args import FLAGS, add_argument
 
-add_argument('--local_cars_per_sec', 0.1, type=float)
-add_argument('--rate', 0.5, type=float) # seconds per tick
-add_argument('--poisson',True, type=bool)
-add_argument('--entry', 'all')
-add_argument('--learn_switch', False, type=bool)
-
-# Python attribute access is expensive. We hardcode these params
+LOCAL_CARS_PER_SEC = 0.1
+RATE = 0.5
 YELLOW_TICKS = 6
 CAPACITY = 20
 EPS = 1e-8
@@ -115,25 +109,6 @@ def advance_finished_cars(dests,length,nexts,state,leading,lastcar,
       leading[e] = newlead
   return overflowed
 
-# Yields None separated groups of incoming cars for each tick according to Poisson
-def poisson(random):
-  lam = 1 / (FLAGS.cars_per_sec * FLAGS.rate)
-  while True:
-    for _ in range(round(random.exponential(lam))): yield None
-    yield archetypes[random.randint(archetypes.shape[0])]
-
-# Yields a car EXACTLY every cars_per_sec, if possible
-def regular(random):
-  cars_per_tick = FLAGS.cars_per_sec * FLAGS.rate
-  ticks_per_car = round(1 / cars_per_tick)
-  cars_per_tick_int = math.ceil(cars_per_tick)
-  for i in itertools.count(0):
-    if ticks_per_car == 0 or i % ticks_per_car == 0:
-      for _ in range(cars_per_tick_int):
-        yield archetypes[0]
-      yield None
-    else: yield None
-
 # Mindlessly copied and pasted from Hackers Delight.
 # Only need the first 4 bits.
 @jit(uint32(uint32),nopython=True,nogil=True,cache=True)
@@ -166,18 +141,14 @@ def move_cars(dests,phases,length,nexts,state,leading,lastcar,rate,current_phase
 class TrafficEnv(gym.Env):
   metadata = {'render.modes': ['human']}
 
-  def _step(self, action):
+  def _step(self, change):
+    self.current_phase[:] = np.logical_xor(self.current_phase, change)
     self.rewards = np.zeros(1, dtype=np.float32)
     self.elapsed += 1 
-    if self.steps > 0:
-      change = np.logical_xor(self.current_phase, action).astype(np.int32) 
-    else:
-      change = np.ones_like(action).astype(np.int32)
-    self.current_phase[:] = action
     self.elapsed *= np.logical_not(change).astype(np.int32)
     overflowed = self.add_new_cars(self.steps)
     move_cars(self.graph.dest, self.graph.phases, self.graph.len,
-        self.graph.nexts, self.state, self.leading, self.lastcar, FLAGS.rate,
+        self.graph.nexts, self.state, self.leading, self.lastcar, RATE,
         self.current_phase, self.elapsed, self.detected)
     self.steps += 1
     overflowed |= advance_finished_cars(self.graph.dest, self.graph.len, self.graph.nexts, self.state,
@@ -187,8 +158,14 @@ class TrafficEnv(gym.Env):
 
   def seed_generator(self, seed=None):
     self.rand = np.random.RandomState(seed)
-    if FLAGS.poisson: self.rand_car = poisson(self.rand)
-    else: self.rand_car = regular(self.rand)
+    self.rand_car = self.poisson()
+
+  # Yields None separated groups of incoming cars for each tick according to Poisson
+  def poisson(self):
+    lam = 1 / (self.cars_per_sec * RATE)
+    while True:
+      for _ in range(round(self.rand.exponential(lam))): yield None
+      yield archetypes[self.rand.randint(archetypes.shape[0])]
 
   def cars_on_roads(self):
     inverted = (self.leading > self.lastcar).astype(np.int32)
@@ -203,7 +180,7 @@ class TrafficEnv(gym.Env):
     self.elapsed[:] = 0
     self.leading[:] = 1
     self.lastcar[:] = 1
-    # self.current_phase[:] = 0 # self.action_space.sample()
+    self.current_phase[:] = self.action_space.sample() # np.zeros(self.graph.intersections)
     self.trip_ix = np.zeros(2, dtype=np.int32)
     self.overflowed = False
     return self.obs
@@ -266,7 +243,7 @@ class TrafficEnv(gym.Env):
       self.init_viewer()
     self.update_colors()
     self.update_locs()
-    time.sleep(FLAGS.rate / 2)
+    time.sleep(RATE / 2)
     return self.viewer.render(return_rgb_array= mode=='rgb_array')
 
   def update_colors(self):
@@ -311,14 +288,13 @@ class TrafficEnv(gym.Env):
     self.current_phase = self.obs[r:r+i]
     self.elapsed = self.obs[-i:]
     self.trip_times = np.empty(TRIP_BUFFER, dtype=np.float32)
-    self.reset_entrypoints()
 
-  def reset_entrypoints(self):
-    if FLAGS.entry == "random": spec = np.random.randint(0b1111, dtype='uint32')
-    elif FLAGS.entry == "one": spec = 0b1110
+  def reset_entrypoints(self, entry):
+    if entry == "random": spec = np.random.randint(0b1111, dtype='uint32')
+    elif entry == "one": spec = 0b1110
     else: spec = 0
     self.graph.generate_entrypoints(spec)
-    FLAGS.cars_per_sec = FLAGS.local_cars_per_sec * self.graph.m * inv_popcount(spec)
+    self.cars_per_sec = LOCAL_CARS_PER_SEC * self.graph.m * inv_popcount(spec)
   
   def triptimes(self):
     if self.trip_ix[1] == 1:
