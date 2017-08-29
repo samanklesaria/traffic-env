@@ -14,11 +14,11 @@ from util import *
 import argparse
 
 # We're dominating 1x1 one way.
-# In symmetric flow, we're not significantly different from optimal 1x1.
+# In symmetric flow, we're slightly worse (1x1). Not statistically significant difference.
+
+# look @ understanding momentum post again for fiddling with learning rate
 
 # add asymmetric flow functionality (arbitrary probs)
-
-# print not just switch probabilities, but integral probs too
 
 # Try another layer with weight sharing
 # Get it to work for constant flow on 3x3
@@ -121,15 +121,20 @@ class MyModel:
       # obz = tf.clip_by_value((ob - self.ob_rms.mean) / self.ob_rms.std, -5.0, 5.0)
       obz = ob
       
+      # obzr = tf.reshape(obz, [-1, features])
       obzr = tf.reshape(obz, [-1, np.prod(ob_space.shape)])
       last_out = obzr
       for i in range(1):
         last_out = tf.nn.tanh(U.dense(last_out, 8, "vffc%i"%(i+1), weight_init=U.normc_initializer(1.0)))
-      self.vpred = U.dense(last_out, 1, "vffinal", weight_init=U.normc_initializer(1.0))[:,0]
+      # rout = tf.reshape(last_out, [-1, 8 * intersections])
+      rout = last_out
+      self.vpred = U.dense(rout, 1, "vffinal", weight_init=U.normc_initializer(1.0))[:,0]
       last_out = obzr
       for i in range(1):
         last_out = tf.nn.tanh(U.dense(last_out, 8, "polfc%i"%(i+1), weight_init=U.normc_initializer(1.0)))
-      pdparam = U.dense(last_out, pdtype.param_shape()[0], "polfinal", U.normc_initializer(0.01))
+      # rout = tf.reshape(last_out, [-1, 8 * intersections])
+      rout = last_out
+      pdparam = U.dense(rout, pdtype.param_shape()[0], "polfinal", U.normc_initializer(0.01))
 
       # robz = tf.reshape(obz, [-1, features])
       #

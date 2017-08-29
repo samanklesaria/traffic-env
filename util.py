@@ -26,6 +26,7 @@ def print_running_stats(iterator):
       print("Reward %2f\t Mean %2f\t Std %2f" % (reward, reward_mean, math.sqrt(reward_var)))
       if info:
         print("One prob: %2f,\t Zero prob: %2f" % (info['onep'], info['zerop']))
+        print("Change prob: %2f,\t Nochange prob: %2f" % (info['changep'], info['nochangep']))
         trip_times.extend(info['trip_times'])
         light_times.extend(info['light_times'])
         unfinished.append(info['unfinished'])
@@ -72,19 +73,26 @@ def display_data(light_times, trip_times, unfinished, overflowed):
   print("Overflowed:", overflowed)
 
 def episode_reward(env, gen):
-  num_0s = 0
+  num_nochange = 0
+  num_change = 0
   num_1s = 0
+  num_0s = 0
   reward = 0.0
   light_times = []
   for (i,_,a,r,info,*_) in gen:
     reward += r 
     light_times.extend(info['light_times'])
-    nz = np.count_nonzero(a)
+    nz = np.count_nonzero(env.unwrapped.current_phase)
     num_1s += nz
     num_0s += (a.size - nz)
+    nz = np.count_nonzero(a)
+    num_change += nz
+    num_nochange += (a.size - nz)
   total_actions = num_1s + num_0s
   info_struct = {'zerop': num_0s / total_actions, 'light_times': light_times,
-    'onep': num_1s / total_actions, 'trip_times': env.unwrapped.triptimes(),
+    'onep': num_1s / total_actions, 'changep': num_change / total_actions,
+    'nochangep': num_nochange / total_actions,
+    'trip_times': env.unwrapped.triptimes(),
     'overflowed': env.unwrapped.overflowed,
     'unfinished': np.sum(env.unwrapped.cars_on_roads())}
   return (reward, info_struct)
