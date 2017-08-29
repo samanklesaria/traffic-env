@@ -13,8 +13,12 @@ import numpy as np
 from util import *
 import argparse
 
-# replicate fixed in 1x1
+# We're dominating 1x1 one way.
+# In symmetric flow, we're not significantly different from optimal 1x1.
+
 # add asymmetric flow functionality (arbitrary probs)
+
+# print not just switch probabilities, but integral probs too
 
 # Try another layer with weight sharing
 # Get it to work for constant flow on 3x3
@@ -172,7 +176,7 @@ def run(env, mode, interactive):
     pposgd.learn(env, MyModel, callback=saver,
         timesteps_per_batch=512, clip_param=0.2,
         max_timesteps=EPISODE_LIGHTS * 1000,
-        entcoeff=1e-6, optim_epochs=30, optim_stepsize=1e-3,
+        entcoeff=1e-3, optim_epochs=30, optim_stepsize=1e-3,
         optim_batchsize=256, gamma=0.99, lam=0.95, schedule='linear')
     U.save_state(SAVE_LOC)
   elif mode == 'random':
