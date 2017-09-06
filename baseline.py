@@ -13,6 +13,12 @@ import numpy as np
 from util import *
 import argparse
 
+# Another curious thing: in restore, we get a reward of 0.9, while in training
+# with params that don't change, we get reward of 0.4. Is it the stochastic switch?
+# YES. It's definitely the stochastic switch. 
+
+# Okay, now we're doing the same thing, but the weights are trainable. 
+
 # Still not working, which is curious.
 # Let's add Remi reward. Again:
   # -1 if no cars passed in the last 2 seconds, and people on the opposite phase
@@ -78,6 +84,16 @@ LIGHT_TICKS = int(LIGHT_SECS // RATE)
 EPISODE_TICKS = int(EPISODE_LIGHTS * LIGHT_TICKS)
 OBS_MOD = int(LIGHT_TICKS // OBS_RATE)
 
+C = -(SPACING * LIGHT_TICKS / 50)
+
+def cinit(shape, dtype=None, partition_info=None):
+  return tf.constant([C,C], dtype=tf.float32)
+
+# Okay. Let's try to get this to learn C.
+# Great. now the two phases are independent. 
+# Now let's try to do phase offsets.
+# Work out how the offsets should be ideally to find best initialization.
+
 def elapsed_phases(obs, i):
   phase = obs[-2*i:-i]
   not_phase = 1 - phase
@@ -97,7 +113,7 @@ class Repeater(gym.Wrapper):
 
   def _reset(self):
     super(Repeater, self)._reset()
-    # self.env.seed_generator(0)
+    self.env.seed_generator(0)
     self.counter = 0
     rendering = self.env.rendering
     self.env.rendering = False
@@ -158,23 +174,31 @@ class MyModel:
       # Wait- we've been stupid. We can't multiply our inputs together. We can only
       # add them. 
       # we could do a 2x2 conv with a stride. Or go back to the old conv
-      obzr = tf.reshape(obz, [-1, features])
-      last_out = obzr
+      last_out = tf.reshape(obz, [-1, intersections * features])
       growth = 10
       # for i in range(2):
       #   new_out = tf.nn.tanh(U.dense(last_out, growth, "vffc%i"%(i+1), weight_init=U.normc_initializer(1.0)))
       #   last_out = tf.concat((new_out, last_out), 1)
       #   features += growth
-      dummy = U.dense(last_out, 1, "vffinal", weight_init=U.normc_initializer(1.0))
-      self.vpred = tf.reduce_mean(tf.reshape(dummy, [-1, intersections]), axis=1)
-      # self.vpred = U.dense(last_out, 1, "vffinal", weight_init=U.normc_initializer(1.0))[:,0]
-      last_out = obzr
+      self.vpred = U.dense(last_out, 1, "vffinal", weight_init=U.normc_initializer(1.0))[:,0]
+
+
+      # Okay, the reward was -1.55. WHY?
+      # Ideally we'd step through in real time. 
+      # That's a little more challenging here. 
+
+      # For the moment, let's just print it
+      # optimal = tf.constant([1, 1, C, C])
+      last_out = tf.reshape(obz, [-1, 4])
       # for i in range(2):
       #   new_out = tf.nn.tanh(U.dense(last_out, growth, "polfc%i"%(i+1), weight_init=U.normc_initializer(1.0)))
       #   last_out = tf.concat((new_out, last_out), 1)
-      res_shape = pdtype.param_shape()
-      dummy = U.dense(last_out, res_shape[0], "polfinal", U.normc_initializer(0.01))
-      pdparam = tf.reduce_mean(tf.reshape(dummy, [-1, intersections, res_shape[0]]), axis=1)
+      # dummy = U.dense(last_out, 1, "polfinal", U.normc_initializer(0.01))
+
+      w = tf.get_variable("polfc/w", [2], initializer=cinit)
+      optimal = tf.concat((tf.constant([1,1], dtype=tf.float32), w), 0)
+      dummy = tf.reduce_sum(optimal * last_out, axis=1)
+      pdparam = tf.reshape(dummy, [-1, intersections])
       # pdparam = U.dense(last_out, pdtype.param_shape()[0], "polfinal", U.normc_initializer(0.01))
 
       self.pd = pdtype.pdfromflat(pdparam)
@@ -184,10 +208,10 @@ class MyModel:
       stochastic = tf.placeholder(dtype=tf.bool, shape=())
       ac = U.switch(stochastic, self.pd.sample(), self.pd.mode())
       self._act = U.function([stochastic, obz], [ac, self.vpred])
-    if name == "pi":
-      # we'll need to make a whole new tboard file
-      tf.summary.histogram("pol_w", tf.get_default_graph().get_tensor_by_name("pi/polfinal/w:0"))
-      tf.summary.histogram("pol_b", tf.get_default_graph().get_tensor_by_name("pi/polfinal/b:0"))
+    # if name == "pi":
+    #   # we'll need to make a whole new tboard file
+    #   tf.summary.histogram("pol_w", tf.get_default_graph().get_tensor_by_name("pi/polfinal/w:0"))
+    #   tf.summary.histogram("pol_b", tf.get_default_graph().get_tensor_by_name("pi/polfinal/b:0"))
 
   def act(self, stochastic, ob):
       ac1, vpred1 =  self._act(stochastic, ob[None])
@@ -214,7 +238,7 @@ def run(env, mode, interactive):
     pposgd.learn(env, MyModel, callback=saver,
         timesteps_per_batch=256, clip_param=0.2,
         max_timesteps=EPISODE_LIGHTS * 1e4,
-        entcoeff=1e-5, optim_epochs=4, optim_stepsize=7e-4,
+        entcoeff=1e-5, optim_epochs=4, optim_stepsize=1e-3,
         optim_batchsize=64, gamma=0.99, lam=0.96, schedule='linear')
     U.save_state(SAVE_LOC)
   elif mode == 'random':
@@ -242,9 +266,12 @@ def run(env, mode, interactive):
     actions = np.zeros((2, env.action_space.n))
     actions[1,:] = 1
     def episode():
-      env.reset()
+      o = env.reset()
       for i in range(EPISODE_LIGHTS):
         a = np.logical_xor(env.unwrapped.current_phase, actions[phase(i)]).astype(np.int32)
+        # forprint = np.reshape(o, (9,4))
+        # print("Seeing obs action", forprint)
+        # print("Using action", a)
         o,r,d,info = env.step(a)
         yield i,o,a,r,info
         if d: break
@@ -254,11 +281,16 @@ def run(env, mode, interactive):
     sess = U.make_session(num_cpu=4)
     sess.__enter__()
     state = U.load_state(SAVE_LOC)
+    optimal = np.array([1, 1, C, C])
     def episode():
       obs = env.reset()
       for t in range(EPISODE_LIGHTS):
         a = act(False, obs)[0]
         if env.rendering: print("Action:", a)
+        # forprint = np.reshape(obs, (9,4))
+        # print("Seeing obs action", forprint)
+        # print("Choosing action", a)
+        # print("Should be", forprint.dot(optimal))
         new_obs, reward, done,info = env.step(a)
         if env.rendering: print("Obs", new_obs)
         yield t,obs,a,reward,info,new_obs,done
