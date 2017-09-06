@@ -3,8 +3,8 @@ from gym.spaces import Box
 import gym_traffic
 from gym_traffic.envs.roadgraph import GridRoad
 from gym_traffic.envs.traffic_env import RATE
-import baselines.pposgd.pposgd_simple as pposgd
-from baselines.pposgd.mlp_policy import MlpPolicy
+import baselines.ppo1.pposgd_simple as pposgd
+from baselines.ppo1.mlp_policy import MlpPolicy
 import baselines.common.tf_util as U
 import tensorflow as tf
 from baselines.common.distributions import make_pdtype
@@ -13,9 +13,22 @@ import numpy as np
 from util import *
 import argparse
 
+# Still not working, which is curious.
+# Let's add Remi reward. Again:
+  # -1 if no cars passed in the last 2 seconds, and people on the opposite phase
+  # were waiting. 
+  # +1 if cars passed in the last 2 seconds, and no people on the opposite phase were
+  # waiting.
+  
+  # Do this after a little bit.
+
+# using cem would also be nice here. Or ES.
+
 # Should at least compare against feature engineered version, 
 # using gradient descent to find the right params for phase length and offset.
 # It will be a linear model, so easy to understand, visualize, etc.
+
+# To make a feature engineered version, just don't use U.dense. Make your own.
 
 # If we wanted to do feature engineering:
 # change = w*elapsed - d1*phase1 - d2*phase2
@@ -84,6 +97,7 @@ class Repeater(gym.Wrapper):
 
   def _reset(self):
     super(Repeater, self)._reset()
+    # self.env.seed_generator(0)
     self.counter = 0
     rendering = self.env.rendering
     self.env.rendering = False
@@ -170,6 +184,10 @@ class MyModel:
       stochastic = tf.placeholder(dtype=tf.bool, shape=())
       ac = U.switch(stochastic, self.pd.sample(), self.pd.mode())
       self._act = U.function([stochastic, obz], [ac, self.vpred])
+    if name == "pi":
+      # we'll need to make a whole new tboard file
+      tf.summary.histogram("pol_w", tf.get_default_graph().get_tensor_by_name("pi/polfinal/w:0"))
+      tf.summary.histogram("pol_b", tf.get_default_graph().get_tensor_by_name("pi/polfinal/b:0"))
 
   def act(self, stochastic, ob):
       ac1, vpred1 =  self._act(stochastic, ob[None])
@@ -196,7 +214,7 @@ def run(env, mode, interactive):
     pposgd.learn(env, MyModel, callback=saver,
         timesteps_per_batch=256, clip_param=0.2,
         max_timesteps=EPISODE_LIGHTS * 1e4,
-        entcoeff=1e-5, optim_epochs=4, optim_stepsize=5e-4,
+        entcoeff=1e-5, optim_epochs=4, optim_stepsize=7e-4,
         optim_batchsize=64, gamma=0.99, lam=0.96, schedule='linear')
     U.save_state(SAVE_LOC)
   elif mode == 'random':

@@ -180,7 +180,8 @@ class TrafficEnv(gym.Env):
     self.elapsed[:] = 0
     self.leading[:] = 1
     self.lastcar[:] = 1
-    self.current_phase[:] = self.action_space.sample() # np.zeros(self.graph.intersections)
+    self.current_phase[:] = self.action_space.sample() 
+    # np.zeros(self.graph.intersections)
     self.trip_ix = np.zeros(2, dtype=np.int32)
     self.overflowed = False
     return self.obs
