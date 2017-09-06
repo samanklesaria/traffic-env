@@ -13,8 +13,29 @@ import numpy as np
 from util import *
 import argparse
 
+# Should at least compare against feature engineered version, 
+# using gradient descent to find the right params for phase length and offset.
+# It will be a linear model, so easy to understand, visualize, etc.
+
+# If we wanted to do feature engineering:
+# change = w*elapsed - d1*phase1 - d2*phase2
+
+# to make this constant phase 2, we just have 
+# w=0, d1 = 1, d2 = 0
+
+# What if we wanted to offset nearby lights?
+# We'd want to change n after our neighbor changed.
+# (elapsed_neighbor - n)
+# ok, no conv
+# The weights would be the same, as the rates are the same
+# We could make the light interval smaller (2 secs)
+# The light in top left would have change = w*elapsed - d1*phase1 - d2*phase2
+# The lights adjacent to it would have change = sum a*(elapsed_neighbor_k - d_k)
+# The only node that benefits from conv is middle in 3x3. So fc is probably best for now
+
 # We're dominating 1x1 one way.
 # In symmetric flow, we're slightly worse (1x1). Not statistically significant difference.
+# It feels like we get worse when weight sharing EVEN IN 1x1 CASE which is odd.
 
 # look @ understanding momentum post again for fiddling with learning rate
 
@@ -29,20 +50,15 @@ import argparse
 
 # should also examine why stochastic action sucks (never more than 7/3 split)
 
-# Adapt to use tensorboard
-
-# we could do weight sharing again. 
-# the last layer is currently taking all nodes into account. we could do it separately
-
 # Eventually we need to have shape [intersections, 3 + (4 * obs_rate)]
 
 # Review the operation of the alg, ensure that we are going through enough episodes
 
 WARMUP_LIGHTS = 10
 OBS_RATE = 2
-LIGHT_SECS = 5
+LIGHT_SECS = 2
 EPISODE_LIGHTS = 100
-SPACING = 3
+SPACING = 12
 SAVE_LOC = "baselined/saved"
 
 LIGHT_TICKS = int(LIGHT_SECS // RATE)
@@ -52,14 +68,17 @@ OBS_MOD = int(LIGHT_TICKS // OBS_RATE)
 def elapsed_phases(obs, i):
   phase = obs[-2*i:-i]
   not_phase = 1 - phase
-  return np.stack((obs[-i:] / 50, phase, not_phase), -1)
+  delay = obs[-i:] / 50
+  return np.stack((delay * phase, delay * not_phase, phase, not_phase), -1)
 
 class Repeater(gym.Wrapper):
   def __init__(self, env):
     super(Repeater, self).__init__(env)
     self.r = self.unwrapped.graph.train_roads
     self.i = self.unwrapped.graph.intersections
-    self.shape = [self.i, 3]
+    # self.shape = [self.i, 3]
+    # self.shape = [self.i, 3 + (4 * OBS_RATE)]
+    self.shape = [self.i, 4]
     self.observation_space = Box(0, 1, shape=self.shape)
     self.zeros = np.zeros(self.i)
 
@@ -69,17 +88,22 @@ class Repeater(gym.Wrapper):
     rendering = self.env.rendering
     self.env.rendering = False
     i = 0
+    detected = np.zeros((OBS_RATE, self.r), dtype=np.float32)
     while i < WARMUP_LIGHTS:
       i += 1
-      obs, _, done, _ = self.env.step(self.env.action_space.sample())
       for j in range(LIGHT_TICKS - 1):
+        obs, _, done, _ = self.env.step(
+            self.zeros if j > 0 else self.env.action_space.sample())
         if done: break
-        obs, _, done, _ = self.env.step(self.zeros)
+        detected[j // OBS_MOD] += obs[:self.r]
       if done:
         print("Overflowed in warmup, trying again")
         self.env.reset()
         i = 0
     self.env.rendering = rendering
+    # reshaped = detected.reshape(OBS_RATE, self.i, 4)
+    # for_conv = reshaped.transpose((1, 0, 2)).reshape(self.i, -1)
+    # return np.concatenate((for_conv, elapsed_phases(obs, self.i)), axis=-1)
     return elapsed_phases(obs, self.i)
 
   def _step(self, action):
@@ -95,10 +119,10 @@ class Repeater(gym.Wrapper):
         change_times = light_dist_secs[np.nonzero(light_dist_secs)]
       info = {'light_times': change_times}
     else: info = None
-    for it in range(LIGHT_TICKS - 1):
+    for it in range(LIGHT_TICKS):
       obs, reward, done, _ = self.env.step(self.zeros if it > 0 else action)
       total_reward += reward
-      detected[(it+1) // OBS_MOD] += obs[:self.r]
+      detected[it // OBS_MOD] += obs[:self.r]
       if done: break
     # reshaped = detected.reshape(OBS_RATE, self.i, 4)
     # for_conv = reshaped.transpose((1, 0, 2)).reshape(self.i, -1)
@@ -115,39 +139,28 @@ class MyModel:
     with tf.variable_scope(name):
       self.scope = tf.get_variable_scope().name
       self.pdtype = pdtype = make_pdtype(ac_space)
-      ob = U.get_placeholder(name="ob", dtype=tf.float32, shape=[None, *ob_space.shape])
-      with tf.variable_scope("obfilter"):
-          self.ob_rms = RunningMeanStd(shape=ob_space.shape)
-      # obz = tf.clip_by_value((ob - self.ob_rms.mean) / self.ob_rms.std, -5.0, 5.0)
-      obz = ob
-      
-      # obzr = tf.reshape(obz, [-1, features])
-      obzr = tf.reshape(obz, [-1, np.prod(ob_space.shape)])
-      last_out = obzr
-      for i in range(1):
-        last_out = tf.nn.tanh(U.dense(last_out, 8, "vffc%i"%(i+1), weight_init=U.normc_initializer(1.0)))
-      # rout = tf.reshape(last_out, [-1, 8 * intersections])
-      rout = last_out
-      self.vpred = U.dense(rout, 1, "vffinal", weight_init=U.normc_initializer(1.0))[:,0]
-      last_out = obzr
-      for i in range(1):
-        last_out = tf.nn.tanh(U.dense(last_out, 8, "polfc%i"%(i+1), weight_init=U.normc_initializer(1.0)))
-      # rout = tf.reshape(last_out, [-1, 8 * intersections])
-      rout = last_out
-      pdparam = U.dense(rout, pdtype.param_shape()[0], "polfinal", U.normc_initializer(0.01))
+      obz = U.get_placeholder(name="ob", dtype=tf.float32, shape=[None, *ob_space.shape])
 
-      # robz = tf.reshape(obz, [-1, features])
-      #
-      # last_out = robz
-      # for i in range(3):
-      #   last_out = tf.nn.tanh(U.dense(last_out, 30, "vffc%i"%(i+1), weight_init=U.normc_initializer(1.0)))
-      # last_out = tf.reshape(last_out, [-1, intersections * 30])
+      # Wait- we've been stupid. We can't multiply our inputs together. We can only
+      # add them. 
+      # we could do a 2x2 conv with a stride. Or go back to the old conv
+      obzr = tf.reshape(obz, [-1, features])
+      last_out = obzr
+      growth = 10
+      # for i in range(2):
+      #   new_out = tf.nn.tanh(U.dense(last_out, growth, "vffc%i"%(i+1), weight_init=U.normc_initializer(1.0)))
+      #   last_out = tf.concat((new_out, last_out), 1)
+      #   features += growth
+      dummy = U.dense(last_out, 1, "vffinal", weight_init=U.normc_initializer(1.0))
+      self.vpred = tf.reduce_mean(tf.reshape(dummy, [-1, intersections]), axis=1)
       # self.vpred = U.dense(last_out, 1, "vffinal", weight_init=U.normc_initializer(1.0))[:,0]
-      #
-      # last_out = robz
-      # for i in range(3):
-      #   last_out = tf.nn.tanh(U.dense(last_out, 30, "polfc%i"%(i+1), weight_init=U.normc_initializer(1.0)))
-      # last_out = tf.reshape(last_out, [-1, intersections * 30])
+      last_out = obzr
+      # for i in range(2):
+      #   new_out = tf.nn.tanh(U.dense(last_out, growth, "polfc%i"%(i+1), weight_init=U.normc_initializer(1.0)))
+      #   last_out = tf.concat((new_out, last_out), 1)
+      res_shape = pdtype.param_shape()
+      dummy = U.dense(last_out, res_shape[0], "polfinal", U.normc_initializer(0.01))
+      pdparam = tf.reduce_mean(tf.reshape(dummy, [-1, intersections, res_shape[0]]), axis=1)
       # pdparam = U.dense(last_out, pdtype.param_shape()[0], "polfinal", U.normc_initializer(0.01))
 
       self.pd = pdtype.pdfromflat(pdparam)
@@ -156,7 +169,7 @@ class MyModel:
 
       stochastic = tf.placeholder(dtype=tf.bool, shape=())
       ac = U.switch(stochastic, self.pd.sample(), self.pd.mode())
-      self._act = U.function([stochastic, ob], [ac, self.vpred])
+      self._act = U.function([stochastic, obz], [ac, self.vpred])
 
   def act(self, stochastic, ob):
       ac1, vpred1 =  self._act(stochastic, ob[None])
@@ -173,16 +186,18 @@ def saver(lcls, glbs):
   if iters > 0 and iters % 100 == 0:
     U.save_state(SAVE_LOC)
 
+# lookup how timesteps_per_batch and optim_batchsize work
+
 def run(env, mode, interactive):
   env = Repeater(env)
   if mode == 'train':
     sess = U.make_session(num_cpu=4)
     sess.__enter__()
     pposgd.learn(env, MyModel, callback=saver,
-        timesteps_per_batch=512, clip_param=0.2,
-        max_timesteps=EPISODE_LIGHTS * 1000,
-        entcoeff=1e-3, optim_epochs=30, optim_stepsize=1e-3,
-        optim_batchsize=256, gamma=0.99, lam=0.95, schedule='linear')
+        timesteps_per_batch=256, clip_param=0.2,
+        max_timesteps=EPISODE_LIGHTS * 1e4,
+        entcoeff=1e-5, optim_epochs=4, optim_stepsize=5e-4,
+        optim_batchsize=64, gamma=0.99, lam=0.96, schedule='linear')
     U.save_state(SAVE_LOC)
   elif mode == 'random':
     def episode():
@@ -246,7 +261,7 @@ if __name__ == '__main__':
   parser.add_argument("--mode", default='train')
   args = parser.parse_args()
   env = gym.make('traffic-v0')
-  env.set_graph(GridRoad(1,1,250))
+  env.set_graph(GridRoad(3,3,250))
   env.seed_generator()
   env.reset_entrypoints(args.entry)
   env.rendering = args.render
