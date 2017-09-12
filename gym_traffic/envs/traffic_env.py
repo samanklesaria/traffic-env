@@ -100,7 +100,7 @@ def advance_finished_cars(dests,length,nexts,state,leading,lastcar,
       else:
         triptime = tick - state[e,ti,newlead]
         trip_times[trip_ix[0]] = triptime
-        rewards[0] += (1 / triptime)
+        rewards[0] += (1 / np.sqrt(triptime))
         trip_ix[0] += 1
         if trip_ix[0] >= TRIP_BUFFER:
           trip_ix[0] = 0
@@ -154,7 +154,7 @@ class TrafficEnv(gym.Env):
     overflowed |= advance_finished_cars(self.graph.dest, self.graph.len, self.graph.nexts, self.state,
       self.leading,self.lastcar,self.trip_times, self.rewards, self.trip_ix, self.steps)
     self.overflowed = bool(overflowed)
-    return self.obs, self.rewards[0] - (np.float(overflowed) * 2), self.overflowed, None
+    return self.obs, self.rewards[0] - (np.float(overflowed) * 7), self.overflowed, None
 
   def seed_generator(self, seed=None):
     self.rand = np.random.RandomState(seed)
