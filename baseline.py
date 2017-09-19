@@ -13,6 +13,8 @@ import numpy as np
 from util import *
 import argparse
 
+# Question: why are manually specified weights failing?
+
 # should perhaps jump to acktr
 
 # lookup how timesteps_per_batch and optim_batchsize work
@@ -51,6 +53,8 @@ OBS_MOD = int(LIGHT_TICKS // OBS_RATE)
 C = -(SPACING * LIGHT_TICKS / 50)
 F = 0 # -0.2
 
+# Let's start out with everybody on fixed cycles. Replicate it again
+
 # we should see how this looks. Set lr = 0 and train.
 
 # This feels non standard, and has an icky extra parameter
@@ -59,6 +63,9 @@ F = 0 # -0.2
 # Clearly this isn't going how we imagined.
 # What we need to do is restore
 
+# should tf debug too
+
+# Gives the squared time since the light on the left changed
 def dist_layer(x, intersections):
   result = np.zeros((intersections * 4, intersections))
   for i in range(1, intersections):
@@ -67,17 +74,21 @@ def dist_layer(x, intersections):
     result[prev+2:prev+4, i] = F
   return tf.square(tf.matmul(x, tf.constant(result, dtype=tf.float32)))
 
-def phase_layer(x, intersections):
+def phase_layer(x, intersections, m):
   result = np.zeros((intersections * 5, intersections))
   bias = np.zeros(intersections)
   for i in range(intersections):
     cur = i*4
-    if (i % 3) == 0:
-      result[cur:cur+2,i] = 1
-      result[cur+2:cur+4,i] = C
-    else:
-      result[intersections + i, i] = -1
-      bias[i] = 0.5
+
+    result[cur:cur+2,i] = 1
+    result[cur+2:cur+4,i] = C
+
+    # if (i % m) == 0:
+    #   result[cur:cur+2,i] = 1
+    #   result[cur+2:cur+4,i] = C
+    # else:
+    #   result[intersections * 5 + i, i] = -1
+    #   bias[i] = 1
   return tf.matmul(x, tf.constant(result, dtype=tf.float32)) + \
       tf.constant(bias, dtype=tf.float32)
 
@@ -89,7 +100,9 @@ def elapsed_phases(obs, i):
   phase = obs[-2*i:-i]
   not_phase = 1 - phase
   delay = obs[-i:] / 50
-  return np.stack((delay * phase, delay * not_phase, phase, not_phase), -1)
+  result = np.stack((delay * phase, delay * not_phase, phase, not_phase), -1)
+  # print(result)
+  return result
 
 class Repeater(gym.Wrapper):
   def __init__(self, env):
@@ -163,11 +176,11 @@ class MyModel:
       self.pdtype = pdtype = make_pdtype(ac_space)
       obz = U.get_placeholder(name="ob", dtype=tf.float32, shape=[None, *ob_space.shape])
       obzr = tf.reshape(obz, [-1, intersections * features])
-      last_out = obzr
 
+      last_out = obzr
       new_out = dist_layer(obzr, intersections)
       last_out = tf.concat((last_out, new_out), 1)
-      pdparam = phase_layer(last_out, intersections)
+      pdparam = phase_layer(last_out, intersections, 2) # need to pass 2 in as param
 
       last_out = obzr
       growth = 5 * intersections
@@ -203,7 +216,7 @@ def saver(lcls, glbs):
   global BEST
   iters = lcls['iters_so_far']
   if iters == 0 and CONTINUED: U.load_state(SAVE_LOC)
-  # if iters == 0: U.save_state(SAVE_LOC)
+  if iters == 0: U.save_state(SAVE_LOC)
   if iters > 0 and iters % 50 == 0:
     m = np.mean(lcls['rewbuffer'])
     if m > BEST:
@@ -268,7 +281,6 @@ def run(env, mode, interactive):
         if env.rendering: print("Action:", a)
         # forprint = np.reshape(obs, (9,4))
         # print("Seeing obs action", forprint)
-        print("Choosing action", a)
         new_obs, reward, done,info = env.step(a)
         # if env.rendering: print("Obs", new_obs)
         yield t,obs,a,reward,info,new_obs,done
@@ -290,7 +302,7 @@ if __name__ == '__main__':
   parser.add_argument("--mode", default='train')
   args = parser.parse_args()
   env = gym.make('traffic-v0')
-  env.set_graph(GridRoad(3,3,250))
+  env.set_graph(GridRoad(2,2,250))
   env.seed_generator()
   env.reset_entrypoints(args.entry)
   env.rendering = args.render
