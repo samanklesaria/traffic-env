@@ -13,6 +13,17 @@ import numpy as np
 from util import *
 import argparse
 
+# okay, that works well.
+# Now let's add a bit of sophistication,
+# - linear combo of phase and follow
+# - follow gives 4 numbers (top, bottom, left, right)
+# - 3x3
+# - do it in tensorflow!
+
+# ---
+
+# Make render rate faster. Nicer to look at non-jerky cars
+
 # Question: why are manually specified weights failing?
 
 # should perhaps jump to acktr
@@ -50,9 +61,9 @@ LIGHT_TICKS = int(LIGHT_SECS // RATE)
 EPISODE_TICKS = int(EPISODE_LIGHTS * LIGHT_TICKS)
 OBS_MOD = int(LIGHT_TICKS // OBS_RATE)
 
-C = -(SPACING * LIGHT_TICKS / 50)
+C = (SPACING * LIGHT_TICKS / 50)
 # print("C=", C)
-F = 0 # -0.2
+F = 0.2
 
 # Let's start out with everybody on fixed cycles. Replicate it again
 
@@ -150,13 +161,14 @@ class Repeater(gym.Wrapper):
     if not self.env.training:
       if self.env.steps == 0: change_times = []
       else:
-        light_dist = (self.env.elapsed + 1) * action.astype(np.int32)
+        change = np.logical_xor(self.env.current_phase, action).astype(np.int32)
+        light_dist = (self.env.elapsed + 1) * change.astype(np.int32)
         light_dist_secs = light_dist.astype(np.float32) * RATE
         change_times = light_dist_secs[np.nonzero(light_dist_secs)]
       info = {'light_times': change_times}
     else: info = None
     for it in range(LIGHT_TICKS):
-      obs, reward, done, _ = self.env.step(self.zeros if it > 0 else action)
+      obs, reward, done, _ = self.env.step(action)
       total_reward += reward
       detected[it // OBS_MOD] += obs[:self.r]
       if done: break
@@ -212,41 +224,40 @@ class MyModel:
   def get_initial_state(self):
       return []
 
-# It's all kinda wrong. We don't want following lights
-# to switch frantically at first, then gradually switch less often
-# We just want them to be the same phase as the first guy, with
-# mounting probability as time goes on.
-
-# Can we switch everything over to a non-derivative scheme?
-# Can this allow for fixed cycle times?
-
-# Let's figure out why this is failing!
 INTER = 4
 M = 2
 dist2x2 = np.zeros((INTER * 4, INTER))
 for i in range(INTER):
   if (i % M) > 0:
     prev = (i-1)*4
-    dist2x2[prev:prev+2,i] = 1
-    dist2x2[prev+2:prev+4, i] = F
+    dist2x2[prev,i] = 1
+    dist2x2[prev+1,i] = -1
+    dist2x2[prev+2,i] = -F
+    dist2x2[prev+3,i] = F
+
 phase2x2 = np.zeros((INTER * 5, INTER))
-bias2 = np.zeros(INTER)
 for i in range(INTER):
-  cur = i*4
   if (i % M) == 0:
-    phase2x2[cur:cur+2,i] = 1
-    phase2x2[cur+2:cur+4,i] = C
+    cur = i*4
+    phase2x2[cur,i] = -1
+    phase2x2[cur+1,i] = 1
+    phase2x2[cur+2,i] = C
+    phase2x2[cur+3,i] = -C
   else:
-    phase2x2[INTER * 4 + i, i] = -1
-    bias2[i] = 1
+    phase2x2[INTER * 4 + i, i] = 1
 def fake_nn(o):
-  dist = np.square(o @ dist2x2)
-  print("Dists")
-  print(dist)
+  dist = o @ dist2x2
+  # print("Dists")
+  # print(dist)
   full = np.concatenate((o, dist))
-  score = (full @ phase2x2) + bias2
-  print("Score", score)
+  score = (full @ phase2x2)
+  # print("Score", score)
   return score > 0
+# THE WHOLE THING IS LINEAR! MIND BLOWN!
+# WE could either 1) unnecessarily pass through atan
+# Or 2) combine all the matrices together
+# Try both!
+
 
 BEST = 0
 def saver(lcls, glbs):
@@ -285,8 +296,7 @@ def run(env, mode, interactive):
     def episode():
       env.reset()
       for i in range(EPISODE_LIGHTS):
-        action = env.unwrapped.current_phase
-        o,r,d,info = env.step(action)
+        o,r,d,info = env.step(zeros)
         yield i,o,zeros,r,info
         if d: break
     analyze(env, episode, interactive)
@@ -298,7 +308,7 @@ def run(env, mode, interactive):
     def episode():
       o = env.reset()
       for i in range(EPISODE_LIGHTS):
-        a = np.logical_xor(env.unwrapped.current_phase, actions[phase(i)]).astype(np.int32)
+        a = actions[phase(i)]
         # forprint = np.reshape(o, (9,4))
         # print("Seeing obs action", forprint)
         # print("Using action", a)
@@ -310,7 +320,7 @@ def run(env, mode, interactive):
     def episode():
       o = env.reset()
       for i in range(EPISODE_LIGHTS):
-        print("Seeing obs action", o)
+        # print("Seeing obs action", o)
         a = fake_nn(o.reshape(-1))
         # print("Using action", a)
         o,r,d,info = env.step(a)

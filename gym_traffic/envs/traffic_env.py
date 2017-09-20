@@ -141,8 +141,12 @@ def move_cars(dests,phases,length,nexts,state,leading,lastcar,rate,current_phase
 class TrafficEnv(gym.Env):
   metadata = {'render.modes': ['human']}
 
-  def _step(self, change):
-    self.current_phase[:] = np.logical_xor(self.current_phase, change)
+  def _step(self, action):
+    if self.steps > 0:
+      change = np.logical_xor(self.current_phase, action)
+    else:
+      change = np.ones_like(action)
+    self.current_phase[:] = action 
     self.rewards = np.zeros(1, dtype=np.float32)
     self.elapsed += 1 
     self.elapsed *= np.logical_not(change).astype(np.int32)
