@@ -13,12 +13,17 @@ import numpy as np
 from util import *
 import argparse
 
+# How can we make it stronger in its convictions?
+# Multiply by a constant
+
 # okay, that works well.
 # Now let's add a bit of sophistication,
 # - linear combo of phase and follow
 # - follow gives 4 numbers (top, bottom, left, right)
 # - 3x3
-# - do it in tensorflow!
+# - do it in tensorflow
+# - let it learn?
+# - add in loop detector stuff (with history? or lstm?)
 
 # ---
 
@@ -77,36 +82,37 @@ F = 0.2
 
 # should tf debug too
 
-# Gives the squared time since the light on the left changed
 def dist_layer(x, intersections):
   result = np.zeros((intersections * 4, intersections))
+  m = int(np.sqrt(intersections))
   for i in range(1, intersections):
-    prev = (i-1)*4
-    result[prev:prev+2,i] = 1
-    result[prev+2:prev+4, i] = F
-  return tf.square(tf.matmul(x, tf.constant(result, dtype=tf.float32)))
+    if (i % m) > 0:
+      prev = (i-1)*4
+      result[prev,i] = 1
+      result[prev+1,i] = -1
+      result[prev+2,i] = -F
+      result[prev+3,i] = F
+  return tf.matmul(x, tf.constant(result, dtype=tf.float32))
 
-def phase_layer(x, intersections, m):
-  result = np.zeros((intersections * 5, intersections))
-  bias = np.zeros(intersections)
+def phase_layer(x, intersections):
+  result = np.zeros((intersections * 4, intersections))
   for i in range(intersections):
     cur = i*4
+    result[cur,i] = -1
+    result[cur+1,i] = 1
+    result[cur+2,i] = C
+    result[cur+3,i] = -C
+  return tf.matmul(x, tf.constant(result, dtype=tf.float32))
 
-    # result[cur:cur+2,i] = 1
-    # result[cur+2:cur+4,i] = C
-
-    if (i % m) == 0:
-      result[cur:cur+2,i] = 1
-      result[cur+2:cur+4,i] = C
+def comb_layer(x, intersections):
+  result = np.zeros((intersections * 2, intersections))
+  m = int(np.sqrt(intersections))
+  for i in range(intersections):
+    if (i % M) == 0:
+      result[intersections + i, i] = 5
     else:
-      result[intersections * 4 + i, i] = -1
-      bias[i] = 1
-  return tf.matmul(x, tf.constant(result, dtype=tf.float32)) + \
-      tf.constant(bias, dtype=tf.float32)
-
-# Great. now the two phases are independent. 
-# Now let's try to do phase offsets.
-# Work out how the offsets should be ideally to find best initialization.
+      result[i,i] = 5
+  return tf.matmul(x, tf.constant(combiner, dtype=tf.float32))
 
 def elapsed_phases(obs, i):
   phase = obs[-2*i:-i]
@@ -191,9 +197,9 @@ class MyModel:
       obzr = tf.reshape(obz, [-1, intersections * features])
 
       last_out = obzr
-      new_out = dist_layer(obzr, intersections)
-      last_out = tf.concat((last_out, new_out), 1)
-      pdparam = phase_layer(last_out, intersections, 2) # need to pass 2 in as param
+      dist = dist_layer(obzr, intersections)
+      phase = phase_layer(obzr, intersections)
+      pdparam = comb_layer(tf.concat((dist, phase), 1), intersections)
 
       last_out = obzr
       growth = 5 * intersections
@@ -235,22 +241,26 @@ for i in range(INTER):
     dist2x2[prev+2,i] = -F
     dist2x2[prev+3,i] = F
 
-phase2x2 = np.zeros((INTER * 5, INTER))
+phase2x2 = np.zeros((INTER * 4, INTER))
+for i in range(INTER):
+  cur = i*4
+  phase2x2[cur,i] = -1
+  phase2x2[cur+1,i] = 1
+  phase2x2[cur+2,i] = C
+  phase2x2[cur+3,i] = -C
+
+combiner = np.zeros((INTER * 2, INTER))
 for i in range(INTER):
   if (i % M) == 0:
-    cur = i*4
-    phase2x2[cur,i] = -1
-    phase2x2[cur+1,i] = 1
-    phase2x2[cur+2,i] = C
-    phase2x2[cur+3,i] = -C
+    combiner[INTER+i,i] = 5
   else:
-    phase2x2[INTER * 4 + i, i] = 1
+    combiner[i,i] = 5
+
 def fake_nn(o):
-  dist = o @ dist2x2
-  # print("Dists")
-  # print(dist)
-  full = np.concatenate((o, dist))
-  score = (full @ phase2x2)
+  dist = np.tanh(o @ dist2x2)
+  phase = np.tanh(o @ phase2x2)
+  full = np.concatenate((dist, phase))
+  score = (full @ combiner)
   # print("Score", score)
   return score > 0
 # THE WHOLE THING IS LINEAR! MIND BLOWN!
