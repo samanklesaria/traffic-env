@@ -13,15 +13,18 @@ import numpy as np
 from util import *
 import argparse
 
+# Let's add the other directions of phase following
+
+# How can we make it suck less?
+# the weights really shouldn't be negative
+
 # How can we make it stronger in its convictions?
 # Multiply by a constant
 
 # okay, that works well.
 # Now let's add a bit of sophistication,
-# - linear combo of phase and follow
 # - follow gives 4 numbers (top, bottom, left, right)
 # - 3x3
-# - do it in tensorflow
 # - let it learn?
 # - add in loop detector stuff (with history? or lstm?)
 
@@ -83,7 +86,7 @@ F = 0.2
 # should tf debug too
 
 def dist_layer(x, intersections):
-  result = np.zeros((intersections * 4, intersections))
+  result = np.zeros((intersections * 4, intersections), dtype=np.float32)
   m = int(np.sqrt(intersections))
   for i in range(1, intersections):
     if (i % m) > 0:
@@ -92,27 +95,30 @@ def dist_layer(x, intersections):
       result[prev+1,i] = -1
       result[prev+2,i] = -F
       result[prev+3,i] = F
-  return tf.matmul(x, tf.constant(result, dtype=tf.float32))
+  weights = tf.get_variable("distw", initializer=result)
+  return tf.nn.tanh(tf.matmul(x, weights))
 
 def phase_layer(x, intersections):
-  result = np.zeros((intersections * 4, intersections))
+  result = np.zeros((intersections * 4, intersections), dtype=np.float32)
   for i in range(intersections):
     cur = i*4
     result[cur,i] = -1
     result[cur+1,i] = 1
     result[cur+2,i] = C
     result[cur+3,i] = -C
-  return tf.matmul(x, tf.constant(result, dtype=tf.float32))
+  weights = tf.get_variable("phasew", initializer=result)
+  return tf.nn.tanh(tf.matmul(x, weights))
 
 def comb_layer(x, intersections):
-  result = np.zeros((intersections * 2, intersections))
+  result = np.zeros((intersections * 2, intersections), dtype=np.float32)
   m = int(np.sqrt(intersections))
   for i in range(intersections):
-    if (i % M) == 0:
+    if (i % m) == 0:
       result[intersections + i, i] = 5
     else:
       result[i,i] = 5
-  return tf.matmul(x, tf.constant(combiner, dtype=tf.float32))
+  weights = tf.get_variable("combw", initializer=result)
+  return tf.matmul(x, weights)
 
 def elapsed_phases(obs, i):
   phase = obs[-2*i:-i]
