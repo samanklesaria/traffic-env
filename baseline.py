@@ -39,7 +39,7 @@ import argparse
 # Add intelligent initialization
 
 
-WARMUP_LIGHTS = 10
+WARMUP_LIGHTS = 0 # 10
 OBS_RATE = 2
 LIGHT_SECS = 2
 EPISODE_LIGHTS = 100
@@ -51,6 +51,7 @@ EPISODE_TICKS = int(EPISODE_LIGHTS * LIGHT_TICKS)
 OBS_MOD = int(LIGHT_TICKS // OBS_RATE)
 
 C = -(SPACING * LIGHT_TICKS / 50)
+# print("C=", C)
 F = 0 # -0.2
 
 # Let's start out with everybody on fixed cycles. Replicate it again
@@ -80,15 +81,15 @@ def phase_layer(x, intersections, m):
   for i in range(intersections):
     cur = i*4
 
-    result[cur:cur+2,i] = 1
-    result[cur+2:cur+4,i] = C
+    # result[cur:cur+2,i] = 1
+    # result[cur+2:cur+4,i] = C
 
-    # if (i % m) == 0:
-    #   result[cur:cur+2,i] = 1
-    #   result[cur+2:cur+4,i] = C
-    # else:
-    #   result[intersections * 5 + i, i] = -1
-    #   bias[i] = 1
+    if (i % m) == 0:
+      result[cur:cur+2,i] = 1
+      result[cur+2:cur+4,i] = C
+    else:
+      result[intersections * 4 + i, i] = -1
+      bias[i] = 1
   return tf.matmul(x, tf.constant(result, dtype=tf.float32)) + \
       tf.constant(bias, dtype=tf.float32)
 
@@ -117,7 +118,7 @@ class Repeater(gym.Wrapper):
     self.zeros = np.zeros(self.i)
 
   def _reset(self):
-    super(Repeater, self)._reset()
+    obs = super(Repeater, self)._reset()
     self.env.seed_generator(0)
     self.counter = 0
     rendering = self.env.rendering
@@ -211,6 +212,42 @@ class MyModel:
   def get_initial_state(self):
       return []
 
+# It's all kinda wrong. We don't want following lights
+# to switch frantically at first, then gradually switch less often
+# We just want them to be the same phase as the first guy, with
+# mounting probability as time goes on.
+
+# Can we switch everything over to a non-derivative scheme?
+# Can this allow for fixed cycle times?
+
+# Let's figure out why this is failing!
+INTER = 4
+M = 2
+dist2x2 = np.zeros((INTER * 4, INTER))
+for i in range(INTER):
+  if (i % M) > 0:
+    prev = (i-1)*4
+    dist2x2[prev:prev+2,i] = 1
+    dist2x2[prev+2:prev+4, i] = F
+phase2x2 = np.zeros((INTER * 5, INTER))
+bias2 = np.zeros(INTER)
+for i in range(INTER):
+  cur = i*4
+  if (i % M) == 0:
+    phase2x2[cur:cur+2,i] = 1
+    phase2x2[cur+2:cur+4,i] = C
+  else:
+    phase2x2[INTER * 4 + i, i] = -1
+    bias2[i] = 1
+def fake_nn(o):
+  dist = np.square(o @ dist2x2)
+  print("Dists")
+  print(dist)
+  full = np.concatenate((o, dist))
+  score = (full @ phase2x2) + bias2
+  print("Score", score)
+  return score > 0
+
 BEST = 0
 def saver(lcls, glbs):
   global BEST
@@ -264,6 +301,17 @@ def run(env, mode, interactive):
         a = np.logical_xor(env.unwrapped.current_phase, actions[phase(i)]).astype(np.int32)
         # forprint = np.reshape(o, (9,4))
         # print("Seeing obs action", forprint)
+        # print("Using action", a)
+        o,r,d,info = env.step(a)
+        yield i,o,a,r,info
+        if d: break
+    analyze(env, episode, interactive)
+  elif mode == 'numpy':
+    def episode():
+      o = env.reset()
+      for i in range(EPISODE_LIGHTS):
+        print("Seeing obs action", o)
+        a = fake_nn(o.reshape(-1))
         # print("Using action", a)
         o,r,d,info = env.step(a)
         yield i,o,a,r,info
