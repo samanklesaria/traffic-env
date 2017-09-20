@@ -18,27 +18,14 @@ import argparse
 # How can we make it suck less?
 # the weights really shouldn't be negative
 
-# How can we make it stronger in its convictions?
-# Multiply by a constant
-
-# okay, that works well.
-# Now let's add a bit of sophistication,
-# - follow gives 4 numbers (top, bottom, left, right)
-# - 3x3
-# - let it learn?
-# - add in loop detector stuff (with history? or lstm?)
-
-# ---
+# add in loop detector stuff (with history? or lstm?)
 
 # Make render rate faster. Nicer to look at non-jerky cars
-
-# Question: why are manually specified weights failing?
 
 # should perhaps jump to acktr
 
 # lookup how timesteps_per_batch and optim_batchsize work
 
-# Still not working, which is curious.
 # Let's add Remi reward. Again:
   # -1 if no cars passed in the last 2 seconds, and people on the opposite phase
   # were waiting. 
@@ -51,14 +38,8 @@ import argparse
 
 # add asymmetric flow functionality (arbitrary probs)
 
-# should also examine why stochastic action sucks (never more than 7/3 split)
 
-# Review the operation of the alg, ensure that we are going through enough episodes
-
-# Add intelligent initialization
-
-
-WARMUP_LIGHTS = 0 # 10
+WARMUP_LIGHTS = 10
 OBS_RATE = 2
 LIGHT_SECS = 2
 EPISODE_LIGHTS = 100
@@ -86,17 +67,36 @@ F = 0.2
 # should tf debug too
 
 def dist_layer(x, intersections):
-  result = np.zeros((intersections * 4, intersections), dtype=np.float32)
+  result = np.zeros((intersections * 4, intersections * 4), dtype=np.float32)
   m = int(np.sqrt(intersections))
   for i in range(1, intersections):
-    if (i % m) > 0:
+    if (i % m) > 0: # left
       prev = (i-1)*4
       result[prev,i] = 1
       result[prev+1,i] = -1
       result[prev+2,i] = -F
       result[prev+3,i] = F
+    if (i % m) < (m-1): # right
+      nxt = (i+1)*4
+      result[nxt,intersections + i] = 1
+      result[nxt+1,intersections + i] = -1
+      result[nxt+2,intersections + i] = -F
+      result[nxt+3,intersections + i] = F
+    if i >= m: # bottom
+      btm = (i - m)*4
+      result[btm,i] = 1
+      result[btm+1,i] = -1
+      result[btm+2,i] = -F
+      result[btm+3,i] = F
+    if i < intersections - m: # top
+      top = (i + m)*4
+      result[top,i] = 1
+      result[top+1,i] = -1
+      result[top+2,i] = -F
+      result[top+3,i] = F
+  mask = (result != 0).astype(np.float32)
   weights = tf.get_variable("distw", initializer=result)
-  return tf.nn.tanh(tf.matmul(x, weights))
+  return tf.nn.tanh(tf.matmul(x, weights * tf.constant(mask)))
 
 def phase_layer(x, intersections):
   result = np.zeros((intersections * 4, intersections), dtype=np.float32)
@@ -106,17 +106,18 @@ def phase_layer(x, intersections):
     result[cur+1,i] = 1
     result[cur+2,i] = C
     result[cur+3,i] = -C
+  mask = (result != 0).astype(np.float32)
   weights = tf.get_variable("phasew", initializer=result)
-  return tf.nn.tanh(tf.matmul(x, weights))
+  return tf.nn.tanh(tf.matmul(x, weights * tf.constant(mask)))
 
 def comb_layer(x, intersections):
-  result = np.zeros((intersections * 2, intersections), dtype=np.float32)
+  result = np.zeros((intersections * 5, intersections), dtype=np.float32)
   m = int(np.sqrt(intersections))
   for i in range(intersections):
     if (i % m) == 0:
-      result[intersections + i, i] = 5
+      result[4 * intersections + i, i] = 1
     else:
-      result[i,i] = 5
+      result[i,i] = 1
   weights = tf.get_variable("combw", initializer=result)
   return tf.matmul(x, weights)
 
