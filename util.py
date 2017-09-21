@@ -7,7 +7,7 @@ import scipy.stats as stats
 def square(x): return x*x
 
 def alot(f):
-  for _ in range(3000): yield f()
+  for _ in range(300): yield f()
 
 def print_running_stats(iterator):
   trip_times = []
@@ -43,28 +43,29 @@ def print_running_stats(iterator):
     return (light_times, trip_times, unfinished, rewards, overflowed)
 
 colors = ['c', 'y']
+lc = ['g', 'r']
 def make_subplot(ax, datas, n):
   for i, data in enumerate(datas):
     x = data[n]
     ax.hist(x, color=colors[i])
-    ax.axvline(np.mean(x), color='b', linestyle='dashed',linewidth=2)
+    ax.axvline(np.mean(x), color=lc[i], linestyle='dashed',linewidth=2)
 
 def make_plot(*infos):
   fig = plt.figure()
   fig.suptitle("Stats", fontweight='bold', fontsize=14)
-  fig.subplots_adjust(hspace=0.5)
+  fig.subplots_adjust(hspace=0.9)
   ax = fig.add_subplot(411)
   ax.set_title("Light Times")
-  make_subplot(ax, infos, 1)
+  make_subplot(ax, infos, 0)
   ax = fig.add_subplot(412)
   ax.set_title("Trip Times")
-  make_subplot(ax, infos, 2)
+  make_subplot(ax, infos, 1)
   ax = fig.add_subplot(413)
   ax.set_title("Unfinished")
-  make_subplot(ax, info, 3)
+  make_subplot(ax, infos, 2)
   ax = fig.add_subplot(414)
   ax.set_title("Rewards")
-  make_subplot(ax, info, 4)
+  make_subplot(ax, infos, 3)
 
 def dist_plot(fname, info):
   make_plot(info)
@@ -73,7 +74,8 @@ def dist_plot(fname, info):
 def pval_plot(trained, fixed):
   make_plot(trained, fixed)
   plt.savefig("comparison.png")
-  print("Pval", stats.ttest_ind(trained, fixed, equal_var=False)[1] / 2)
+  print("Rewared p-val", stats.ttest_ind(trained[3], fixed[3], equal_var=False)[1])
+  print("Trip-times p-val", stats.ttest_ind(trained[1], fixed[1], equal_var=False)[1])
 
 def episode_reward(env, gen):
   num_nochange = 0

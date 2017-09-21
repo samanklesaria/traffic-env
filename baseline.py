@@ -42,7 +42,7 @@ WARMUP_LIGHTS = 10
 OBS_RATE = 2
 LIGHT_SECS = 2
 EPISODE_LIGHTS = 100
-SPACING = 12
+SPACING = 6
 SAVE_LOC = "baselined/saved"
 
 LIGHT_TICKS = int(LIGHT_SECS // RATE)
@@ -50,7 +50,7 @@ EPISODE_TICKS = int(EPISODE_LIGHTS * LIGHT_TICKS)
 OBS_MOD = int(LIGHT_TICKS // OBS_RATE)
 
 C = (SPACING * LIGHT_TICKS / 50)
-F = 0.2
+F = 0.5
 
 def episode(env, f):
   o = env.reset()
@@ -122,8 +122,9 @@ def elapsed_phases(obs, i):
   return np.stack((delay * phase, delay * not_phase, phase, not_phase), -1)
 
 class Repeater(gym.Wrapper):
-  def __init__(self, env):
+  def __init__(self, env, entry):
     super(Repeater, self).__init__(env)
+    self.entry = entry
     self.rendering = env.rendering
     self.r = self.unwrapped.graph.train_roads
     self.i = self.unwrapped.graph.intersections
@@ -132,8 +133,9 @@ class Repeater(gym.Wrapper):
     self.zeros = np.zeros(self.i)
 
   def _reset(self):
+    self.env.reset_entrypoints(self.entry)
     obs = super(Repeater, self)._reset()
-    self.env.seed_generator(0)
+    # self.env.seed_generator(0)
     self.counter = 0
     rendering = self.env.rendering
     self.env.rendering = False
@@ -241,8 +243,8 @@ def saver(lcls, glbs):
 def fixed_phase(i):
   return int((i % (SPACING * 2)) >= SPACING)
 
-def run(env, mode):
-  env = Repeater(env)
+def run(env, mode, entry):
+  env = Repeater(env, entry)
   fixed_ac = np.zeros((2, env.action_space.n))
   fixed_ac[1,:] = 1
   if mode == 'train':
@@ -256,23 +258,23 @@ def run(env, mode):
     U.save_state(SAVE_LOC)
   elif mode == 'random':
     dist_plot('random', analyze(env,
-      lambda: episode(env, lambda i o e: e.action_space.sample())))
+      lambda: episode(env, lambda i,o,e: e.action_space.sample())))
   elif mode == 'const':
     zeros = np.zeros(env.action_space.n)
     dist_plot('const', analyze(env,
-      lambda: episode(env, lambda i o e: zeros)))
+      lambda: episode(env, lambda i,o,e: zeros)))
   elif mode == 'fixed':
     dist_plot('fixed', analyze(env,
-      lambda: episode(env, lambda i o e: fixed_ac[fixed_phase(i)])))
+      lambda: episode(env, lambda i,o,e: fixed_ac[fixed_phase(i)])))
   elif mode == 'validate':
     act = MyModel("pi", env.observation_space, env.action_space).act
     sess = U.make_session(num_cpu=4)
     sess.__enter__()
     state = U.load_state(SAVE_LOC)
-    trained_stats = analyze(env,,
-      lambda: episode(env, lambda i o e: act(False, o)[0]))
+    trained_stats = analyze(env,
+      lambda: episode(env, lambda i,o,e: act(False, o)[0]))
     fixed_stats = analyze(env, 
-      lambda: episode(env, lambda i o e: fixed_ac[fixed_phase(i)]))
+      lambda: episode(env, lambda i,o,e: fixed_ac[fixed_phase(i)]))
     pval_plot(trained_stats, fixed_stats)
 
 def analyze(env, g):
@@ -288,8 +290,7 @@ if __name__ == '__main__':
   env = gym.make('traffic-v0')
   env.set_graph(GridRoad(3,3,250))
   env.seed_generator()
-  env.reset_entrypoints(args.entry)
   env.rendering = args.render
   env.training = args.mode == 'train'
   CONTINUED = args.continued
-  run(env, args.mode)
+  run(env, args.mode, args.entry)
