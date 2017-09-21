@@ -6,19 +6,21 @@ import scipy.stats as stats
 
 def square(x): return x*x
 
-def forever(f):
-  while True: yield f()
+def alot(f):
+  for _ in range(3000): yield f()
 
 def print_running_stats(iterator):
   trip_times = []
   light_times = []
   unfinished = []
+  rewards = []
   overflowed = 0
   try:
     reward_mean = 0
     reward_var = 0
     for iterations in count(1):
       reward, info = next(iterator)
+      rewards.append(reward)
       reward_mean = (reward + (iterations - 1) * reward_mean) / iterations
       if iterations >= 2:
         reward_var = (iterations - 2) / (iterations - 1) * reward_var + \
@@ -31,46 +33,47 @@ def print_running_stats(iterator):
         light_times.extend(info['light_times'])
         unfinished.append(info['unfinished'])
         overflowed += int(info['overflowed'])
-  except KeyboardInterrupt:
-    print("Interrupted")
-    return (light_times, trip_times, unfinished, overflowed / iterations)
+  except (KeyboardInterrupt, StopIteration):
+    overflowed /= iterations
+    print("Interrupted\n")
+    print("Light times mean %2f, mode %2f, std %2f" % (np.mean(light_times), stats.mode(light_times, axis=None).mode, np.std(light_times)))
+    print("Trip times mean %2f, mode %2f, std %2f" % (np.mean(trip_times), stats.mode(trip_times, axis=None).mode, np.std(trip_times)))
+    print("Unfinished mean %2f, mode %2f, std %2f" % (np.mean(unfinished), stats.mode(unfinished, axis=None).mode, np.std(unfinished)))
+    print("Overflowed:", overflowed)
+    return (light_times, trip_times, unfinished, rewards, overflowed)
 
-def make_subplot(ax, data):
-  ax.hist(data, color='c')
-  ax.axvline(np.mean(data), color='b', linestyle='dashed',linewidth=2)
+colors = ['c', 'y']
+def make_subplot(ax, datas, n):
+  for i, data in enumerate(datas):
+    x = data[n]
+    ax.hist(x, color=colors[i])
+    ax.axvline(np.mean(x), color='b', linestyle='dashed',linewidth=2)
 
-def make_plot(light_times, trip_times, unfinished):
+def make_plot(*infos):
   fig = plt.figure()
   fig.suptitle("Stats", fontweight='bold', fontsize=14)
   fig.subplots_adjust(hspace=0.5)
-  ax = fig.add_subplot(311)
+  ax = fig.add_subplot(411)
   ax.set_title("Light Times")
-  make_subplot(ax, light_times)
-  ax = fig.add_subplot(312)
+  make_subplot(ax, infos, 1)
+  ax = fig.add_subplot(412)
   ax.set_title("Trip Times")
-  make_subplot(ax, trip_times)
-  ax = fig.add_subplot(313)
+  make_subplot(ax, infos, 2)
+  ax = fig.add_subplot(413)
   ax.set_title("Unfinished")
-  make_subplot(ax, unfinished)
+  make_subplot(ax, info, 3)
+  ax = fig.add_subplot(414)
+  ax.set_title("Rewards")
+  make_subplot(ax, info, 4)
 
-def write_data(light_times, trip_times, unfinished, overflowed):
-  make_plot(light_times, trip_times, unfinished)
-  plt.savefig('hist.png')
-  np.save("light_times.npy", light_times)
-  np.save("trip_times.npy", trip_times)
-  np.save("unfinished.npy", unfinished)
-  print("Light times mean %2f, mode %2f, std %2f" % (np.mean(light_times), stats.mode(light_times, axis=None).mode, np.std(light_times)))
-  print("Trip times mean %2f, mode %2f, std %2f" % (np.mean(trip_times), stats.mode(trip_times, axis=None).mode, np.std(trip_times)))
-  print("Unfinished mean %2f, mode %2f, std %2f" % (np.mean(unfinished), stats.mode(unfinished, axis=None).mode, np.std(unfinished)))
-  print("Overflowed:", overflowed)
+def dist_plot(fname, info):
+  make_plot(info)
+  plt.savefig(fname + '.png')
 
-def display_data(light_times, trip_times, unfinished, overflowed):
-  make_plot(light_times, trip_times, unfinished)
-  plt.show()
-  print("Light times mean %2f, mode %2f, std %2f" % (np.mean(light_times), stats.mode(light_times, axis=None).mode, np.std(light_times)))
-  print("Trip times mean %2f, mode %2f, std %2f" % (np.mean(trip_times), stats.mode(trip_times, axis=None).mode, np.std(trip_times)))
-  print("Unfinished mean %2f, mode %2f, std %2f" % (np.mean(unfinished), stats.mode(unfinished, axis=None).mode, np.std(unfinished)))
-  print("Overflowed:", overflowed)
+def pval_plot(trained, fixed):
+  make_plot(trained, fixed)
+  plt.savefig("comparison.png")
+  print("Pval", stats.ttest_ind(trained, fixed, equal_var=False)[1] / 2)
 
 def episode_reward(env, gen):
   num_nochange = 0
