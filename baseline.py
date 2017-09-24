@@ -114,7 +114,7 @@ def comb_layer(x, intersections):
     if (i % m) == 0:
       result[4 * intersections + i, i] = 3
     else:
-      result[i,i] = 2
+      result[i,i] = 1
   weights = tf.get_variable("combw", initializer=result)
   return tf.matmul(x, weights)
 
@@ -201,10 +201,9 @@ class MyModel:
       phase = phase_layer(phaseinfo, intersections)
       last_out = tf.nn.tanh(U.dense(everything, 8 * intersections,
         "pffc1", weight_init=U.normc_initializer(1.0)))
-      last_out = tf.nn.tanh(U.dense(last_out, intersections,
-        "pffc2", weight_init=U.normc_initializer(1.0)))
-      pdparam = comb_layer(tf.concat((dist, phase), 1), intersections) + \
-          last_out
+      last_out = U.dense(last_out, intersections,
+        "pffc2", weight_init=U.normc_initializer(1.0))
+      pdparam = comb_layer(tf.concat((dist, phase), 1), intersections) + last_out
 
       last_out = everything
       growth = 5 * intersections
