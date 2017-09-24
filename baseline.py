@@ -13,6 +13,9 @@ import numpy as np
 from util import *
 import argparse
 
+# We should allow comparison to constant (for one dir)
+# Maybe it just knows the right thing to compare for each entry
+
 # WE should also play with other grid topologies.
 # One way streets would allow green ways to have an effect.
 # but this structure is substantially harder to weight

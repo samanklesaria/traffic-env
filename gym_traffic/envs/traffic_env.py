@@ -298,6 +298,7 @@ class TrafficEnv(gym.Env):
   def reset_entrypoints(self, entry):
     if entry == "random": spec = np.random.randint(0b1111, dtype='uint32')
     elif entry == "one": spec = 0b1110
+    elif entry == "two": spec = 0b1010
     else: spec = 0
     self.graph.generate_entrypoints(spec)
     self.cars_per_sec = LOCAL_CARS_PER_SEC * self.graph.m * inv_popcount(spec)
