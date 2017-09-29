@@ -138,7 +138,6 @@ class Repeater(gym.Wrapper):
   def _reset(self):
     self.env.reset_entrypoints(self.entry)
     obs = super(Repeater, self)._reset()
-    # self.env.seed_generator(0)
     self.counter = 0
     rendering = self.env.rendering
     self.env.rendering = False
@@ -291,7 +290,7 @@ if __name__ == '__main__':
   args = parser.parse_args()
   env = gym.make('traffic-v0')
   env.set_graph(GridRoad(3,3,250))
-  env.seed_generator()
+  env.seed()
   env.rendering = args.render
   env.training = args.mode == 'train'
   CONTINUED = args.continued

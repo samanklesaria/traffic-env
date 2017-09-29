@@ -6,6 +6,7 @@ import numba
 import itertools
 import time
 import math
+from gym.utils import seeding
 
 LOCAL_CARS_PER_SEC = 0.1
 RATE = 0.5
@@ -160,9 +161,10 @@ class TrafficEnv(gym.Env):
     self.overflowed = bool(overflowed)
     return self.obs, self.rewards[0] - (np.float(overflowed) * 7), self.overflowed, None
 
-  def seed_generator(self, seed=None):
-    self.rand = np.random.RandomState(seed)
+  def _seed(self, seed):
+    self.rand, seed = seeding.np_random(seed)
     self.rand_car = self.poisson()
+    return [seed]
 
   # Yields None separated groups of incoming cars for each tick according to Poisson
   def poisson(self):
