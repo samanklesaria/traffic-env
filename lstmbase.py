@@ -2,10 +2,12 @@ import gym
 import argparse
 import numpy as np
 from gym.spaces import Box
-from baselines.a2c.a2c import learn
-from baselines.common import set_global_seeds
+from baselines.a2c.a2c import Model, Runner
+from baselines import logger
+from baselines.common import set_global_seeds, explained_variance
 from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
 from baselines.a2c.utils import fc, batch_to_seq, seq_to_batch, lstm, sample, check_shape
+import baselines.common.tf_util as U
 
 import gym_traffic
 from gym_traffic.envs.roadgraph import GridRoad
@@ -13,19 +15,132 @@ from gym_traffic.envs.traffic_env import RATE
 from util import *
 import tensorflow as tf
 
+WARMUP_LIGHTS = 10
+OBS_RATE = 2
+LIGHT_SECS = 2
+EPISODE_LIGHTS = 100
+SPACING = 6
+SAVE_LOC = "baselined/saved"
 
-class LstmPolicy(object):
+LIGHT_TICKS = int(LIGHT_SECS // RATE)
+EPISODE_TICKS = int(EPISODE_LIGHTS * LIGHT_TICKS)
+OBS_MOD = int(LIGHT_TICKS // OBS_RATE)
+
+C = (SPACING * LIGHT_TICKS / 50)
+F = 0.5
+
+def dist_layer(x, intersections):
+  result = np.zeros((intersections * 4, intersections * 4), dtype=np.float32)
+  m = int(np.sqrt(intersections))
+  for i in range(1, intersections):
+    if (i % m) > 0: # left
+      prev = (i-1)*4
+      result[prev,i] = 1
+      result[prev+1,i] = -1
+      result[prev+2,i] = -F
+      result[prev+3,i] = F
+    if (i % m) < (m-1): # right
+      nxt = (i+1)*4
+      result[nxt,intersections + i] = 1
+      result[nxt+1,intersections + i] = -1
+      result[nxt+2,intersections + i] = -F
+      result[nxt+3,intersections + i] = F
+    if i >= m: # bottom
+      btm = (i - m)*4
+      result[btm,i] = 1
+      result[btm+1,i] = -1
+      result[btm+2,i] = -F
+      result[btm+3,i] = F
+    if i < intersections - m: # top
+      top = (i + m)*4
+      result[top,i] = 1
+      result[top+1,i] = -1
+      result[top+2,i] = -F
+      result[top+3,i] = F
+  mask = (result != 0).astype(np.float32)
+  weights = tf.get_variable("distw", initializer=result)
+  return tf.nn.tanh(tf.matmul(x, weights * tf.constant(mask)))
+
+def phase_layer(x, intersections):
+  result = np.zeros((intersections * 4, intersections), dtype=np.float32)
+  for i in range(intersections):
+    cur = i*4
+    result[cur,i] = -1
+    result[cur+1,i] = 1
+    result[cur+2,i] = C
+    result[cur+3,i] = -C
+  mask = (result != 0).astype(np.float32)
+  weights = tf.get_variable("phasew", initializer=result)
+  return tf.nn.tanh(tf.matmul(x, weights * tf.constant(mask)))
+
+def comb_layer(x, intersections):
+  result = np.zeros((intersections * 5, intersections), dtype=np.float32)
+  m = int(np.sqrt(intersections))
+  for i in range(intersections):
+    if (i % m) == 0:
+      result[4 * intersections + i, i] = 3
+    else:
+      result[i,i] = 1
+  weights = tf.get_variable("combw", initializer=result)
+  return tf.matmul(x, weights)
+
+def learn(policy, env, seed, load=False):
+    nsteps=5
+    nstack=4
+    vf_coef=0.5
+    ent_coef=0.01
+    max_grad_norm=0.5
+    lr=7e-4
+    total_timesteps=EPISODE_LIGHTS * int(1e5)
+    lrschedule='constant'
+    epsilon=1e-5
+    alpha=0.99
+    gamma=0.99
+    log_interval=100
+    save_interval = 500
+    tf.reset_default_graph()
+    set_global_seeds(seed)
+
+    nenvs = env.num_envs
+    ob_space = env.observation_space
+    ac_space = env.action_space
+    num_procs = len(env.remotes) # HACK
+    model = Model(policy=policy, ob_space=ob_space, ac_space=ac_space, nenvs=nenvs, nsteps=nsteps, nstack=nstack, num_procs=num_procs, ent_coef=ent_coef, vf_coef=vf_coef,
+        max_grad_norm=max_grad_norm, lr=lr, alpha=alpha, epsilon=epsilon, total_timesteps=total_timesteps, lrschedule=lrschedule)
+    runner = Runner(env, model, nsteps=nsteps, nstack=nstack, gamma=gamma)
+
+    nbatch = nenvs*nsteps
+    for update in range(1, total_timesteps//nbatch+1):
+        obs, states, rewards, masks, actions, values = runner.run()
+        policy_loss, value_loss, policy_entropy = model.train(obs, states, rewards, masks, actions, values)
+        if update % log_interval == 0 or update == 1:
+            ev = explained_variance(values, rewards)
+            logger.record_tabular("mean reward", np.mean(rewards))
+            logger.record_tabular("nupdates", update)
+            logger.record_tabular("total_timesteps", update*nbatch)
+            logger.record_tabular("policy_entropy", float(policy_entropy))
+            logger.record_tabular("value_loss", float(value_loss))
+            logger.record_tabular("explained_variance", float(ev))
+            logger.dump_tabular()
+    env.close()
+
+
+class LstmPolicy:
 
     def __init__(self, sess, ob_space, ac_space, nenv, nsteps, nstack, nlstm=256, reuse=False):
         nbatch = nenv*nsteps
         nh, nw, nc = ob_space.shape
+        intersections = nh * nw
         ob_shape = (nbatch, nh, nw, nc*nstack)
         nact = ac_space.n
-        X = tf.placeholder(tf.uint8, ob_shape) #obs
+        X = tf.placeholder(tf.float32, ob_shape) #obs
         M = tf.placeholder(tf.float32, [nbatch]) #mask (done t-1)
         S = tf.placeholder(tf.float32, [nenv, nlstm*2]) #states
         with tf.variable_scope("model", reuse=reuse):
-            rX = tf.reshape(X, [-1, nh*nw*nc])
+            phaseinfo = tf.reshape(X[:,:,:,-4:], [-1, intersections * 4])
+            rX = tf.reshape(X, [-1, intersections * nc])
+            dist = dist_layer(phaseinfo, intersections)
+            phase = phase_layer(phaseinfo, intersections)
             h = fc(tf.cast(rX, tf.float32)/255., 'f1', 32, act=tf.nn.tanh, init_scale=np.sqrt(2))
             h2 = fc(h, 'f2', 64, act=tf.nn.tanh, init_scale=np.sqrt(2))
             h3 = fc(h2, 'f3', 512, act=tf.nn.tanh, init_scale=np.sqrt(2))
@@ -33,7 +148,8 @@ class LstmPolicy(object):
             ms = batch_to_seq(M, nenv, nsteps)
             h5, snew = lstm(xs, ms, S, 'lstm1', nh=nlstm)
             h5 = seq_to_batch(h5)
-            pi = fc(h5, 'pi', nact, act=lambda x:x)
+            cl = comb_layer(tf.concat((dist, phase), 1), intersections)
+            pi = tf.identity(fc(h5, 'pifc', nact, act=lambda x:x) + cl, "pi")
             vf = fc(h5, 'v', 1, act=lambda x:x)
 
         v0 = vf[:, 0]
@@ -54,23 +170,6 @@ class LstmPolicy(object):
         self.vf = vf
         self.step = step
         self.value = value
-
-
-
-
-# Right. 1 problem is that the lstm arch uses convs that
-# are way too big. 
-# Let's just make a dumb port that doesn't use cnns
-
-WARMUP_LIGHTS = 10
-OBS_RATE = 2
-LIGHT_SECS = 2
-EPISODE_LIGHTS = 100
-SPACING = 6
-
-LIGHT_TICKS = int(LIGHT_SECS // RATE)
-EPISODE_TICKS = int(EPISODE_LIGHTS * LIGHT_TICKS)
-OBS_MOD = int(LIGHT_TICKS // OBS_RATE)
 
 def elapsed_phases(obs, i):
   phase = obs[-2*i:-i]
@@ -146,8 +245,8 @@ def run(make_env, mode, seed):
   set_global_seeds(seed)
   if mode == 'train':
     env = SubprocVecEnv([make_env(seed + i) for i in range(4)])
-    learn(LstmPolicy, env, seed, total_timesteps=EPISODE_LIGHTS * int(1e5),
-        lrschedule='constant')
+    learn(LstmPolicy, env, seed)
+    
 
 if __name__ == '__main__':
   parser = argparse.ArgumentParser()
